@@ -1,29 +1,13 @@
-// Browser polyfill types declared in types.d.ts
+// Chrome popup controller.
+
 type ExtensionApi = typeof chrome;
-
-const extensionGlobal = globalThis as typeof globalThis & {
-  chrome?: ExtensionApi;
-  browser?: ExtensionApi;
-};
-const extensionApi = (extensionGlobal.chrome ?? extensionGlobal.browser) as ExtensionApi;
-
-interface OTPResponse {
-  success: boolean;
-  otp?: string;
-  error?: string;
-}
-
-interface OTPRequest {
-  action: string;
-  domain: string;
-  autoFill?: boolean;
-}
 
 interface AccountInfo {
   email: string;
   accessToken: string;
   accessTokenExpires: number;
   refreshToken?: string;
+  grantedScopes?: string;
   addedAt: number;
   lastUsedAt: number;
 }
@@ -33,13 +17,48 @@ interface AccountsResponse {
   activeEmail: string | null;
 }
 
+interface OtpFillResult {
+  success: boolean;
+  strategy: 'segmented' | 'single' | 'focused' | 'none';
+  reason?: string;
+  score?: number;
+}
+
+interface LatestOtpResult {
+  requestId?: string;
+  success: boolean;
+  otp?: string;
+  domain: string;
+  message: string;
+  autoFillResult?: OtpFillResult;
+  accountEmail?: string | null;
+  timestamp: number;
+}
+
+interface FetchOtpStartResponse {
+  success: boolean;
+  pending?: boolean;
+  requestId?: string;
+  error?: string;
+}
+
 type DomainOverrides = Record<string, string>;
 
 interface VersionInfo {
   current: string;
   latest: string;
   updateAvailable: boolean;
+  lastChecked: number;
 }
+
+const extensionGlobal = globalThis as typeof globalThis & {
+  chrome?: ExtensionApi;
+  browser?: ExtensionApi;
+};
+
+const extensionApi = (extensionGlobal.chrome ?? extensionGlobal.browser) as ExtensionApi;
+const LATEST_RESULT_KEY = 'latest_otp_result';
+const RESULT_TTL_MS = 60 * 1000;
 
 class PopupController {
   private statusElement: HTMLElement;
@@ -53,15 +72,15 @@ class PopupController {
   private overrideInput: HTMLInputElement;
   private clearOverrideBtn: HTMLButtonElement;
   private overrideStatus: HTMLElement;
-  private currentWebsiteDomain: string = '';
-
-  // Account selector elements
   private accountEmail: HTMLElement;
   private accountDropdownToggle: HTMLButtonElement;
   private accountDropdown: HTMLElement;
   private accountList: HTMLElement;
   private addAccountBtn: HTMLButtonElement;
-  private isDropdownOpen: boolean = false;
+  private currentWebsiteDomain = '';
+  private isDropdownOpen = false;
+  private resultPollingInterval: number | null = null;
+  private resultPollingTimeout: number | null = null;
 
   constructor() {
     this.statusElement = document.getElementById('status')!;
@@ -75,8 +94,6 @@ class PopupController {
     this.overrideInput = document.getElementById('overrideDomain') as HTMLInputElement;
     this.clearOverrideBtn = document.getElementById('clearOverride') as HTMLButtonElement;
     this.overrideStatus = document.getElementById('overrideStatus')!;
-
-    // Account selector elements
     this.accountEmail = document.getElementById('accountEmail')!;
     this.accountDropdownToggle = document.getElementById('accountDropdownToggle') as HTMLButtonElement;
     this.accountDropdown = document.getElementById('accountDropdown')!;
@@ -86,48 +103,36 @@ class PopupController {
     this.init();
   }
 
-  private async init() {
-    // Load accounts first
+  private async init(): Promise<void> {
     await this.loadAccounts();
-
-    // Check for updates
+    await this.checkForRecentResults();
     await this.checkForUpdates();
     await this.displayCurrentDomain();
     await this.loadAutoFillPreference();
+
     this.grabButton.addEventListener('click', () => this.handleGrabOTP());
     this.autoFillCheckbox.addEventListener('change', () => this.saveAutoFillPreference());
-
-    // Domain override settings
     this.settingsToggle.addEventListener('click', () => this.toggleOverridePanel());
     this.overrideInput.addEventListener('blur', () => this.handleOverrideChange());
-    this.overrideInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        this.handleOverrideChange();
-        this.overrideInput.blur();
-      }
+    this.overrideInput.addEventListener('keydown', event => {
+      if (event.key === 'Enter') this.overrideInput.blur();
     });
     this.clearOverrideBtn.addEventListener('click', () => this.handleClearOverride());
-
-    // Account selector events
-    this.accountDropdownToggle.addEventListener('click', () => this.toggleAccountDropdown());
-    document.getElementById('accountRow')?.addEventListener('click', (e) => {
-      if (e.target !== this.accountDropdownToggle && !this.accountDropdownToggle.contains(e.target as Node)) {
-        this.toggleAccountDropdown();
-      }
+    this.accountDropdownToggle.addEventListener('click', event => {
+      event.stopPropagation();
+      this.toggleAccountDropdown();
     });
     this.addAccountBtn.addEventListener('click', () => this.handleAddAccount());
-
-    // Close dropdown when clicking outside
-    document.addEventListener('click', (e) => {
-      if (this.isDropdownOpen && !this.accountDropdown.contains(e.target as Node) &&
-          !document.getElementById('accountRow')?.contains(e.target as Node)) {
+    document.addEventListener('click', event => {
+      const target = event.target as Node;
+      const accountRow = document.getElementById('accountRow');
+      if (this.isDropdownOpen && !this.accountDropdown.contains(target) && !accountRow?.contains(target)) {
         this.closeAccountDropdown();
       }
     });
   }
 
-  // Account management methods
-  private async loadAccounts() {
+  private async loadAccounts(): Promise<void> {
     try {
       const response = await extensionApi.runtime.sendMessage({ action: 'getAccounts' }) as AccountsResponse;
       this.renderAccounts(response.accounts, response.activeEmail);
@@ -138,74 +143,66 @@ class PopupController {
     }
   }
 
-  private renderAccounts(accounts: Record<string, AccountInfo>, activeEmail: string | null) {
+  private renderAccounts(accounts: Record<string, AccountInfo>, activeEmail: string | null): void {
     const emails = Object.keys(accounts);
+    const visibleEmail = activeEmail && accounts[activeEmail] ? activeEmail : emails[0];
 
-    // Update main display
-    if (activeEmail && accounts[activeEmail]) {
-      this.accountEmail.textContent = activeEmail;
-      this.accountEmail.classList.remove('no-account');
-    } else if (emails.length > 0) {
-      // No active but has accounts - shouldn't happen normally
-      this.accountEmail.textContent = emails[0];
+    if (visibleEmail) {
+      this.accountEmail.textContent = visibleEmail;
       this.accountEmail.classList.remove('no-account');
     } else {
       this.accountEmail.textContent = 'No account connected';
       this.accountEmail.classList.add('no-account');
     }
 
-    // Render dropdown list
-    this.accountList.innerHTML = '';
+    this.accountList.replaceChildren();
 
     emails.forEach(email => {
-      const isActive = email === activeEmail;
       const item = document.createElement('div');
-      item.className = `account-item${isActive ? ' active' : ''}`;
-      item.innerHTML = `
-        ${isActive ? '<span class="account-item-check">✓</span>' : ''}
-        <span class="account-item-email">${email}</span>
-        <button class="account-remove-btn" title="Remove account" data-email="${email}">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-        </button>
-      `;
+      item.className = `account-item${email === activeEmail ? ' active' : ''}`;
 
-      // Click to switch account
-      item.addEventListener('click', (e) => {
-        const target = e.target as HTMLElement;
-        if (!target.closest('.account-remove-btn')) {
-          this.handleSwitchAccount(email);
-        }
-      });
+      const check = document.createElement('span');
+      check.className = 'account-item-check';
+      check.textContent = email === activeEmail ? '✓' : '';
 
-      // Remove button
-      const removeBtn = item.querySelector('.account-remove-btn');
-      removeBtn?.addEventListener('click', (e) => {
-        e.stopPropagation();
+      const label = document.createElement('span');
+      label.className = 'account-item-email';
+      label.textContent = email;
+
+      const removeButton = document.createElement('button');
+      removeButton.className = 'account-remove-btn';
+      removeButton.title = 'Remove account';
+      removeButton.dataset.email = email;
+      removeButton.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>';
+      removeButton.addEventListener('click', event => {
+        event.stopPropagation();
         this.handleRemoveAccount(email);
       });
 
+      item.append(check, label, removeButton);
+      item.addEventListener('click', () => this.handleSwitchAccount(email));
       this.accountList.appendChild(item);
     });
   }
 
-  private toggleAccountDropdown() {
+  private toggleAccountDropdown(): void {
     this.isDropdownOpen = !this.isDropdownOpen;
     this.accountDropdown.style.display = this.isDropdownOpen ? 'block' : 'none';
     this.accountDropdownToggle.classList.toggle('open', this.isDropdownOpen);
   }
 
-  private closeAccountDropdown() {
+  private closeAccountDropdown(): void {
     this.isDropdownOpen = false;
     this.accountDropdown.style.display = 'none';
     this.accountDropdownToggle.classList.remove('open');
   }
 
-  private async handleAddAccount() {
+  private async handleAddAccount(): Promise<void> {
     this.closeAccountDropdown();
-    this.showStatus('Adding Gmail account...', 'loading');
+    this.showStatus('Opening Google sign-in...', 'loading');
 
     try {
-      const response = await extensionApi.runtime.sendMessage({ action: 'addAccount' });
+      const response = await extensionApi.runtime.sendMessage({ action: 'addAccount' }) as { success: boolean; email?: string; error?: string };
       if (response.success) {
         this.showStatus(`Added account: ${response.email}`, 'success');
         await this.loadAccounts();
@@ -218,9 +215,8 @@ class PopupController {
     }
   }
 
-  private async handleSwitchAccount(email: string) {
+  private async handleSwitchAccount(email: string): Promise<void> {
     this.closeAccountDropdown();
-
     try {
       await extensionApi.runtime.sendMessage({ action: 'setActiveAccount', email });
       await this.loadAccounts();
@@ -230,10 +226,8 @@ class PopupController {
     }
   }
 
-  private async handleRemoveAccount(email: string) {
-    if (!confirm(`Remove account ${email}?`)) {
-      return;
-    }
+  private async handleRemoveAccount(email: string): Promise<void> {
+    if (!confirm(`Remove account ${email}?`)) return;
 
     try {
       await extensionApi.runtime.sendMessage({ action: 'removeAccount', email });
@@ -244,29 +238,23 @@ class PopupController {
     }
   }
 
-  private async displayCurrentDomain() {
+  private async displayCurrentDomain(): Promise<void> {
     try {
-      const [tab] = await extensionApi.tabs.query({ active: true, currentWindow: true });
-      const tabUrl = tab?.url || tab?.pendingUrl;
+      const tab = await this.getActiveTab();
+      const tabUrl = tab.url || tab.pendingUrl;
+      if (!tabUrl) throw new Error('No tab URL available');
 
-      if (tabUrl) {
-        this.currentWebsiteDomain = new URL(tabUrl).hostname;
+      this.currentWebsiteDomain = new URL(tabUrl).hostname;
+      const override = await this.getOverride(this.currentWebsiteDomain);
 
-        // Check for override
-        const override = await this.getOverride(this.currentWebsiteDomain);
-
-        if (override) {
-          this.domainElement.textContent = `Searching: ${override}`;
-          this.overrideInput.value = override;
-          this.overrideStatus.textContent = `Override for ${this.currentWebsiteDomain}`;
-        } else {
-          this.domainElement.textContent = `Current site: ${this.currentWebsiteDomain}`;
-          this.overrideInput.value = '';
-          this.overrideStatus.textContent = '';
-        }
+      if (override) {
+        this.domainElement.textContent = `Searching: ${override}`;
+        this.overrideInput.value = override;
+        this.overrideStatus.textContent = `Override for ${this.currentWebsiteDomain}`;
       } else {
-        this.domainElement.textContent = 'Click "Get OTP" to detect current site';
-        this.settingsToggle.style.display = 'none';
+        this.domainElement.textContent = `Current site: ${this.currentWebsiteDomain}`;
+        this.overrideInput.value = '';
+        this.overrideStatus.textContent = '';
       }
     } catch (error) {
       console.error('Error getting current domain:', error);
@@ -275,17 +263,17 @@ class PopupController {
     }
   }
 
-  private async loadAutoFillPreference() {
+  private async loadAutoFillPreference(): Promise<void> {
     try {
       const result = await extensionApi.storage.local.get(['autoFillEnabled']) as { autoFillEnabled?: boolean };
-      this.autoFillCheckbox.checked = result.autoFillEnabled ?? true; // Default to true
+      this.autoFillCheckbox.checked = result.autoFillEnabled ?? true;
     } catch (error) {
       console.error('Error loading auto-fill preference:', error);
-      this.autoFillCheckbox.checked = true; // Default to true on error
+      this.autoFillCheckbox.checked = true;
     }
   }
 
-  private async saveAutoFillPreference() {
+  private async saveAutoFillPreference(): Promise<void> {
     try {
       await extensionApi.storage.local.set({ autoFillEnabled: this.autoFillCheckbox.checked });
     } catch (error) {
@@ -293,209 +281,236 @@ class PopupController {
     }
   }
 
-  private async handleGrabOTP() {
-    // Check if we have any accounts first
-    const response = await extensionApi.runtime.sendMessage({ action: 'getAccounts' }) as AccountsResponse;
-    if (Object.keys(response.accounts).length === 0) {
-      this.showStatus('Please add a Gmail account first', 'error');
-      return;
-    }
-
-    this.setLoading(true);
-    this.showStatus('Searching Gmail for OTP...', 'loading');
-
+  private async handleGrabOTP(): Promise<void> {
     try {
-      const tabs = await extensionApi.tabs.query({ active: true, currentWindow: true });
-      const tab = tabs[0];
-
-      const tabUrl = tab?.url || tab?.pendingUrl;
-      if (!tabUrl) {
-        console.error('No URL available in tab object:', Object.keys(tab || {}));
-        throw new Error('Unable to get current tab URL - activeTab permission may not be granted');
+      const accounts = await extensionApi.runtime.sendMessage({ action: 'getAccounts' }) as AccountsResponse;
+      if (Object.keys(accounts.accounts).length === 0) {
+        this.showStatus('Please add a Gmail account first', 'error');
+        return;
       }
+
+      this.setLoading(true);
+      this.showStatus('Searching Gmail for OTP...', 'loading');
+
+      const tab = await this.getActiveTab();
+      if (!tab.id) throw new Error('Unable to access active tab');
+
+      const tabUrl = tab.url || tab.pendingUrl;
+      if (!tabUrl) throw new Error('Unable to get current tab URL - activeTab permission may not be granted');
 
       const websiteDomain = new URL(tabUrl).hostname;
-
-      // Check for domain override
       const override = await this.getOverride(websiteDomain);
       const searchDomain = override || websiteDomain;
+      const requestId = this.generateRequestId();
+      let frameIds: number[] = [];
 
-      // If auto-fill is enabled, inject bridge immediately (while activeTab is hot)
       if (this.autoFillCheckbox.checked) {
-        try {
-          console.log('[Popup] Auto-fill enabled, injecting bridge immediately...');
-          await extensionApi.scripting.executeScript({
-            target: { tabId: tab.id! },
-            files: ['otp-bridge.js']
-          });
-
-          // Wait a moment for bridge to connect
-          await new Promise(resolve => setTimeout(resolve, 100));
-          console.log('[Popup] Bridge injected, now fetching OTP...');
-        } catch (error) {
-          // Just log the error - OTP will still be copied to clipboard
-          console.log('[Popup] Bridge injection skipped:', (error as Error).message);
-        }
+        frameIds = await this.injectBridge(tab.id);
       }
 
-      const otpResponse = await extensionApi.runtime.sendMessage({
+      const response = await extensionApi.runtime.sendMessage({
         action: 'fetchOTP',
         domain: searchDomain,
-        autoFill: this.autoFillCheckbox.checked
-      } as OTPRequest) as OTPResponse;
+        websiteDomain,
+        autoFill: this.autoFillCheckbox.checked,
+        tabId: tab.id,
+        frameIds,
+        requestId
+      }) as FetchOtpStartResponse;
 
-      if (otpResponse.success && otpResponse.otp) {
-        let autoFilled = false;
-
-        // If auto-fill was enabled, send OTP directly to the content script.
-        if (this.autoFillCheckbox.checked) {
-          try {
-            await extensionApi.tabs.sendMessage(tab.id!, {
-              action: 'fillOTP',
-              otp: otpResponse.otp
-            });
-            autoFilled = true;
-          } catch (error) {
-            console.log('[Popup] OTP auto-fill skipped:', (error as Error).message);
-          }
-        }
-
-        const copied = await this.copyToClipboard(otpResponse.otp);
-
-        if (autoFilled && copied) {
-          this.showStatus(`OTP auto-filled & copied: ${otpResponse.otp}`, 'success');
-        } else if (autoFilled) {
-          this.showStatus(`OTP auto-filled: ${otpResponse.otp}`, 'success');
-        } else if (copied) {
-          this.showStatus(`OTP copied to clipboard: ${otpResponse.otp}`, 'success');
-        } else {
-          this.showStatus(`OTP found: ${otpResponse.otp} (copy manually)`, 'success');
-        }
-      } else {
-        this.showStatus(otpResponse.error || 'No OTP found in recent emails', 'error');
+      if (!response.success) {
+        this.showStatus(response.error || 'Unable to start OTP request', 'error');
+        this.setLoading(false);
+        return;
       }
+
+      this.startResultPolling(response.requestId || requestId);
     } catch (error) {
-      console.error('Error fetching OTP:', error);
-      this.showStatus('Error: ' + (error as Error).message, 'error');
-    } finally {
+      console.error('Error handling OTP request:', error);
+      this.showStatus(`Error: ${(error as Error).message}`, 'error');
       this.setLoading(false);
+      this.stopResultPolling();
+    }
+  }
+
+  private async getActiveTab(): Promise<chrome.tabs.Tab> {
+    const [tab] = await extensionApi.tabs.query({ active: true, currentWindow: true });
+    if (!tab) throw new Error('No active tab found');
+    return tab;
+  }
+
+  private async injectBridge(tabId: number): Promise<number[]> {
+    try {
+      const results = await extensionApi.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        files: ['otp-bridge.js']
+      });
+
+      return Array.from(new Set(
+        results
+          .map(result => result.frameId)
+          .filter((frameId): frameId is number => typeof frameId === 'number')
+      ));
+    } catch (error) {
+      console.log('[Popup] All-frame OTP bridge injection failed:', (error as Error).message);
+    }
+
+    try {
+      const results = await extensionApi.scripting.executeScript({
+        target: { tabId },
+        files: ['otp-bridge.js']
+      });
+
+      return Array.from(new Set(
+        results
+          .map(result => result.frameId)
+          .filter((frameId): frameId is number => typeof frameId === 'number')
+      ));
+    } catch (error) {
+      console.log('[Popup] OTP bridge injection skipped:', (error as Error).message);
+    }
+
+    return [];
+  }
+
+  private startResultPolling(requestId: string): void {
+    this.stopResultPolling();
+
+    this.resultPollingInterval = window.setInterval(() => {
+      this.checkForRecentResults(requestId);
+    }, 500);
+
+    this.resultPollingTimeout = window.setTimeout(() => {
+      this.stopResultPolling();
+      this.setLoading(false);
+      this.showStatus('Still searching. Reopen the extension to check the result.', 'loading');
+    }, RESULT_TTL_MS);
+  }
+
+  private stopResultPolling(): void {
+    if (this.resultPollingInterval !== null) {
+      window.clearInterval(this.resultPollingInterval);
+      this.resultPollingInterval = null;
+    }
+
+    if (this.resultPollingTimeout !== null) {
+      window.clearTimeout(this.resultPollingTimeout);
+      this.resultPollingTimeout = null;
+    }
+  }
+
+  private async checkForRecentResults(requestId?: string): Promise<void> {
+    try {
+      const result = await extensionApi.storage.local.get([LATEST_RESULT_KEY]) as { [LATEST_RESULT_KEY]?: LatestOtpResult };
+      const latestResult = result[LATEST_RESULT_KEY];
+
+      if (!latestResult || Date.now() - latestResult.timestamp > RESULT_TTL_MS) return;
+      if (requestId && latestResult.requestId !== requestId) return;
+
+      this.stopResultPolling();
+      this.setLoading(false);
+
+      if (latestResult.success && latestResult.otp) {
+        const copied = await this.copyToClipboard(latestResult.otp);
+        const suffix = copied ? ' & copied' : '';
+        const message = latestResult.autoFillResult?.success
+          ? `OTP auto-filled${suffix}: ${latestResult.otp}`
+          : copied
+            ? `OTP copied to clipboard: ${latestResult.otp}`
+            : latestResult.message;
+
+        this.showStatus(message, 'success');
+      } else {
+        this.showStatus(latestResult.message, 'error');
+      }
+
+      await extensionApi.storage.local.remove(LATEST_RESULT_KEY);
+    } catch (error) {
+      console.log('Could not check OTP result:', error);
     }
   }
 
   private async copyToClipboard(text: string): Promise<boolean> {
-    if (navigator.clipboard?.writeText) {
-      try {
+    try {
+      if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(text);
         return true;
-      } catch (error) {
-        console.warn('Modern clipboard write failed, trying fallback:', error);
       }
-    }
 
-    const textarea = document.createElement('textarea');
-    textarea.value = text;
-    textarea.setAttribute('readonly', '');
-    textarea.style.position = 'fixed';
-    textarea.style.left = '-9999px';
-    textarea.style.top = '0';
-    textarea.style.opacity = '0';
-    document.body.appendChild(textarea);
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'fixed';
+      textarea.style.left = '-9999px';
+      textarea.style.top = '0';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
 
-    try {
-      textarea.focus();
-      textarea.select();
-      textarea.setSelectionRange(0, text.length);
-      return document.execCommand('copy');
+      try {
+        textarea.focus();
+        textarea.select();
+        textarea.setSelectionRange(0, text.length);
+        return document.execCommand('copy');
+      } finally {
+        textarea.remove();
+      }
     } catch (error) {
       console.error('Failed to copy to clipboard:', error);
       return false;
-    } finally {
-      textarea.remove();
     }
   }
 
-  private showStatus(message: string, type: 'loading' | 'success' | 'error') {
+  private showStatus(message: string, type: 'loading' | 'success' | 'error'): void {
     this.statusElement.textContent = message;
     this.statusElement.className = `status ${type}`;
     this.statusElement.style.display = 'block';
   }
 
-  private setLoading(isLoading: boolean) {
+  private setLoading(isLoading: boolean): void {
     this.grabButton.disabled = isLoading;
-    if (isLoading) {
-      this.grabButton.textContent = 'Searching...';
-    } else {
-      this.grabButton.textContent = 'Get OTP from Gmail';
-    }
+    this.grabButton.textContent = isLoading ? 'Searching...' : 'Get OTP from Gmail';
   }
 
-  // Domain override methods
   private async getOverride(websiteDomain: string): Promise<string | null> {
-    try {
-      const result = await extensionApi.storage.local.get(['domain_overrides']) as { domain_overrides?: DomainOverrides };
-      const overrides = result.domain_overrides || {};
-      return overrides[websiteDomain] || null;
-    } catch (error) {
-      console.error('Error getting domain override:', error);
-      return null;
-    }
+    const result = await extensionApi.storage.local.get(['domain_overrides']) as { domain_overrides?: DomainOverrides };
+    const overrides = result.domain_overrides || {};
+    return overrides[websiteDomain] || null;
   }
 
   private async saveOverride(websiteDomain: string, emailDomain: string): Promise<void> {
-    try {
-      const result = await extensionApi.storage.local.get(['domain_overrides']) as { domain_overrides?: DomainOverrides };
-      const overrides = result.domain_overrides || {};
-      overrides[websiteDomain] = emailDomain;
-      await extensionApi.storage.local.set({ domain_overrides: overrides });
-    } catch (error) {
-      console.error('Error saving domain override:', error);
-    }
+    const result = await extensionApi.storage.local.get(['domain_overrides']) as { domain_overrides?: DomainOverrides };
+    const overrides = result.domain_overrides || {};
+    overrides[websiteDomain] = emailDomain;
+    await extensionApi.storage.local.set({ domain_overrides: overrides });
   }
 
   private async clearOverride(websiteDomain: string): Promise<void> {
-    try {
-      const result = await extensionApi.storage.local.get(['domain_overrides']) as { domain_overrides?: DomainOverrides };
-      const overrides = result.domain_overrides || {};
-      delete overrides[websiteDomain];
-      await extensionApi.storage.local.set({ domain_overrides: overrides });
-    } catch (error) {
-      console.error('Error clearing domain override:', error);
-    }
+    const result = await extensionApi.storage.local.get(['domain_overrides']) as { domain_overrides?: DomainOverrides };
+    const overrides = result.domain_overrides || {};
+    delete overrides[websiteDomain];
+    await extensionApi.storage.local.set({ domain_overrides: overrides });
   }
 
-  private toggleOverridePanel() {
+  private toggleOverridePanel(): void {
     const isHidden = this.overridePanel.style.display === 'none';
     this.overridePanel.style.display = isHidden ? 'block' : 'none';
-    if (isHidden) {
-      this.overrideInput.focus();
-    }
+    if (isHidden) this.overrideInput.focus();
   }
 
-  private async handleOverrideChange() {
+  private async handleOverrideChange(): Promise<void> {
     const value = this.overrideInput.value.trim().toLowerCase();
-
     if (!this.currentWebsiteDomain) return;
 
     if (!value) {
-      // Empty input - clear override
       await this.clearOverride(this.currentWebsiteDomain);
       this.domainElement.textContent = `Current site: ${this.currentWebsiteDomain}`;
       this.overrideStatus.textContent = '';
       return;
     }
 
-    // Basic validation - should have at least one dot and no spaces
     if (!value.includes('.') || value.includes(' ')) {
-      this.overrideStatus.textContent = 'Enter a valid domain (e.g., example.com)';
+      this.overrideStatus.textContent = 'Enter valid domain (e.g., example.com)';
       this.overrideStatus.style.color = '#c62828';
-      return;
-    }
-
-    // Don't save if same as detected domain
-    if (value === this.currentWebsiteDomain) {
-      await this.clearOverride(this.currentWebsiteDomain);
-      this.domainElement.textContent = `Current site: ${this.currentWebsiteDomain}`;
-      this.overrideStatus.textContent = '';
       return;
     }
 
@@ -505,7 +520,7 @@ class PopupController {
     this.overrideStatus.style.color = '#2e7d32';
   }
 
-  private async handleClearOverride() {
+  private async handleClearOverride(): Promise<void> {
     if (!this.currentWebsiteDomain) return;
 
     await this.clearOverride(this.currentWebsiteDomain);
@@ -514,22 +529,23 @@ class PopupController {
     this.overrideStatus.textContent = '';
   }
 
-  private async checkForUpdates() {
+  private async checkForUpdates(): Promise<void> {
     try {
-      // Inline version check to avoid ES module imports in Chrome
       const cached = await extensionApi.storage.local.get(['version_check']) as { version_check?: VersionInfo };
       const versionInfo = cached.version_check;
 
-      if (versionInfo && versionInfo.updateAvailable) {
+      if (versionInfo?.updateAvailable) {
         this.updateMessage.textContent = `Version ${versionInfo.latest} is available (you have ${versionInfo.current}).`;
         this.updateBanner.style.display = 'block';
       }
     } catch (error) {
-      // Silent fail - don't disrupt user experience for version checks
       console.log('Failed to check for updates:', error);
     }
   }
 
+  private generateRequestId(): string {
+    return crypto.randomUUID?.() ?? `otp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
 }
 
 document.addEventListener('DOMContentLoaded', () => {

@@ -1,36 +1,38 @@
-// Minimal bridge content script for OTP auto-fill
-// Injected immediately on user click to maintain activeTab permission
-// Receives OTP data via direct message from popup
+// Minimal bridge content script for OTP auto-fill.
+// Injected immediately on user click to maintain activeTab permission.
 
-import { fillOTPCode } from './otp-finder';
+import { fillOTPCode, type OtpFillResult } from './otp-finder';
 
 type ExtensionApi = typeof chrome;
+
+interface FillOtpMessage {
+  action: 'fillOTP';
+  otp?: string;
+}
+
+type FillOtpResponse = OtpFillResult;
 
 const extensionGlobal = globalThis as typeof globalThis & {
   chrome?: ExtensionApi;
   browser?: ExtensionApi;
 };
-const extensionApi = (extensionGlobal.chrome ?? extensionGlobal.browser) as ExtensionApi;
 
+const extensionApi = (extensionGlobal.chrome ?? extensionGlobal.browser) as ExtensionApi;
 const log = (message: string) => console.log('[OTP Bridge]', message);
 
-log('Content script loaded on: ' + window.location.href);
+log(`Ready on ${window.location.href}`);
 
-// Listen for direct messages from popup (more reliable than ports)
 extensionApi.runtime.onMessage.addListener((
-  message: { action: string; otp?: string },
+  message: FillOtpMessage,
   _sender: chrome.runtime.MessageSender,
-  sendResponse: (response?: { success: boolean }) => void
+  sendResponse: (response?: FillOtpResponse) => void
 ) => {
-  log('Received message: ' + message.action);
-
   if (message.action === 'fillOTP' && message.otp) {
-    const filled = fillOTPCode(message.otp, log);
-    sendResponse({ success: filled });
+    sendResponse(fillOTPCode(message.otp, log));
+    return true;
   }
-  return true;
-});
 
-log('Ready for OTP data');
+  return false;
+});
 
 export {};

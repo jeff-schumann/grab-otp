@@ -1,26 +1,29 @@
-// Firefox OTP Bridge Content Script
-// Enhanced bridge for Firefox with proper browser API usage and React/Vue compatibility
-import { fillOTPCode } from './otp-finder';
+// Firefox OTP bridge content script.
+
+import { fillOTPCode, type OtpFillResult } from './otp-finder';
+
+declare const browser: typeof chrome;
+
+interface FillOtpMessage {
+  action: 'fillOTP';
+  otp?: string;
+}
+
+type FillOtpResponse = OtpFillResult;
 
 const log = (message: string) => console.log('[Firefox OTP Bridge]', message);
 
-log('Loading on: ' + window.location.href);
+log(`Ready on ${window.location.href}`);
 
-// Listen for direct messages from popup (more reliable than ports)
 browser.runtime.onMessage.addListener((
-  message: { action: string; otp?: string },
+  message: FillOtpMessage,
   _sender: unknown,
-  sendResponse: (response?: { success: boolean }) => void
+  sendResponse: (response?: FillOtpResponse) => void
 ) => {
-  log('Received message: ' + message.action);
-
   if (message.action === 'fillOTP' && message.otp) {
-    const filled = fillOTPCode(message.otp, log);
-    sendResponse({ success: filled });
+    sendResponse(fillOTPCode(message.otp, log));
+    return true;
   }
-  return true;
+
+  return false;
 });
-
-log('Ready for OTP data');
-
-export {};
