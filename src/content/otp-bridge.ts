@@ -2,6 +2,8 @@
 // Injected immediately on user click to maintain activeTab permission
 // Receives OTP data via direct message from popup
 
+import { fillOTPCode } from './otp-finder';
+
 type ExtensionApi = typeof chrome;
 
 const extensionGlobal = globalThis as typeof globalThis & {
@@ -10,7 +12,9 @@ const extensionGlobal = globalThis as typeof globalThis & {
 };
 const extensionApi = (extensionGlobal.chrome ?? extensionGlobal.browser) as ExtensionApi;
 
-console.log('[OTP Bridge] Content script loaded on:', window.location.href);
+const log = (message: string) => console.log('[OTP Bridge]', message);
+
+log('Content script loaded on: ' + window.location.href);
 
 // Listen for direct messages from popup (more reliable than ports)
 extensionApi.runtime.onMessage.addListener((
@@ -18,48 +22,15 @@ extensionApi.runtime.onMessage.addListener((
   _sender: chrome.runtime.MessageSender,
   sendResponse: (response?: { success: boolean }) => void
 ) => {
-  console.log('[OTP Bridge] Received message:', message.action);
+  log('Received message: ' + message.action);
 
   if (message.action === 'fillOTP' && message.otp) {
-    fillOTPCode(message.otp);
-    sendResponse({ success: true });
+    const filled = fillOTPCode(message.otp, log);
+    sendResponse({ success: filled });
   }
   return true;
 });
 
-// Simple OTP filling function
-function fillOTPCode(otpCode: string): void {
-  console.log('[OTP Bridge] Attempting to fill OTP (' + otpCode.length + ' digits)');
-
-  // Try common OTP input selectors
-  const selectors = [
-    'input[autocomplete="one-time-code"]',
-    'input[inputmode="numeric"]',
-    'input[type="text"]',
-    'input[type="number"]',
-    'input:not([type])'
-  ];
-
-  for (const selector of selectors) {
-    const inputs = document.querySelectorAll(selector) as NodeListOf<HTMLInputElement>;
-
-    for (const input of inputs) {
-      if (input.offsetParent !== null && !input.disabled && !input.readOnly) {
-        console.log('[OTP Bridge] Filling input (redacted)');
-
-        // Fill the input
-        input.value = otpCode;
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-        input.focus();
-        return;
-      }
-    }
-  }
-
-  console.log('[OTP Bridge] No suitable input found');
-}
-
-console.log('[OTP Bridge] Ready for OTP data');
+log('Ready for OTP data');
 
 export {};

@@ -17,12 +17,17 @@ export default defineConfig(({ mode }) => {
         : resolve(__dirname, 'src/background/background.ts'),
     popup: isFirefox
       ? resolve(__dirname, 'src/popup/popup-firefox.ts')
-      : resolve(__dirname, 'src/popup/popup.ts'),
-    'otp-bridge': resolve(__dirname, 'src/content/otp-bridge.ts')
+      : resolve(__dirname, 'src/popup/popup.ts')
   };
 
+  // Each target gets exactly one bridge entry so the shared otp-finder module
+  // is inlined into it. A module imported by 2+ entries would be hoisted into a
+  // separate chunk, which breaks executeScript-injected content scripts that
+  // cannot resolve ES imports at runtime.
   if (isFirefox) {
     rollupInput['otp-bridge-firefox'] = resolve(__dirname, 'src/content/otp-bridge-firefox.ts');
+  } else {
+    rollupInput['otp-bridge'] = resolve(__dirname, 'src/content/otp-bridge.ts');
   }
 
   return {
