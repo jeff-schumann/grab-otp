@@ -29,6 +29,8 @@ interface LatestOtpResult {
   success: boolean;
   otp?: string;
   domain: string;
+  websiteDomain?: string;
+  tabId?: number;
   message?: string;
   autoFillResult?: OtpFillResult;
   accountEmail?: string | null;
@@ -66,6 +68,7 @@ const extensionApi = (extensionGlobal.chrome ?? extensionGlobal.browser) as Exte
 const LATEST_RESULT_KEY = 'latest_otp_result';
 const IN_FLIGHT_KEY = 'otp_request_in_flight';
 const RESULT_TTL_MS = 60 * 1000;
+const AUTO_FILLED_RESULT_TTL_MS = 5 * 1000;
 
 class PopupController {
   private statusElement: HTMLElement;
@@ -137,6 +140,11 @@ class PopupController {
     this.accountDropdownToggle.addEventListener('click', event => {
       event.stopPropagation();
       this.toggleAccountDropdown();
+    });
+    document.getElementById('accountRow')?.addEventListener('click', event => {
+      if (event.target !== this.accountDropdownToggle && !this.accountDropdownToggle.contains(event.target as Node)) {
+        this.toggleAccountDropdown();
+      }
     });
     this.addAccountBtn.addEventListener('click', () => this.handleAddAccount());
     document.addEventListener('click', event => {
@@ -299,6 +307,8 @@ class PopupController {
 
   private async handleGrabOTP(): Promise<void> {
     try {
+      await extensionApi.storage.local.remove(LATEST_RESULT_KEY);
+
       const accounts = await extensionApi.runtime.sendMessage({ action: 'getAccounts' }) as AccountsResponse;
       if (Object.keys(accounts.accounts).length === 0) {
         this.showStatus('Please add a Gmail account first', 'error');
@@ -403,9 +413,13 @@ class PopupController {
       };
 
       const latestResult = stored[LATEST_RESULT_KEY];
-      if (latestResult && Date.now() - latestResult.timestamp <= RESULT_TTL_MS) {
-        await this.renderResult(latestResult);
-        return;
+      if (latestResult) {
+        if (await this.shouldRestoreLatestResult(latestResult)) {
+          await this.renderResult(latestResult, { closeOnAutoFill: false });
+          return;
+        }
+
+        await extensionApi.storage.local.remove(LATEST_RESULT_KEY);
       }
 
       const inFlight = stored[IN_FLIGHT_KEY];
@@ -426,7 +440,37 @@ class PopupController {
     }
   }
 
-  private async renderResult(result: LatestOtpResult): Promise<void> {
+  private isAutoFilledResult(result: LatestOtpResult): boolean {
+    return result.success && Boolean(result.otp) && result.autoFillResult?.success === true;
+  }
+
+  private async shouldRestoreLatestResult(result: LatestOtpResult): Promise<boolean> {
+    const age = Date.now() - result.timestamp;
+    if (age > RESULT_TTL_MS) return false;
+    if (!this.isAutoFilledResult(result)) return true;
+    if (age > AUTO_FILLED_RESULT_TTL_MS) return false;
+
+    return this.isSamePageAsResult(result);
+  }
+
+  private async isSamePageAsResult(result: LatestOtpResult): Promise<boolean> {
+    if (result.tabId === undefined && !result.websiteDomain) return true;
+
+    try {
+      const tab = await this.getActiveTab();
+      if (result.tabId !== undefined && tab.id !== result.tabId) return false;
+      if (!result.websiteDomain) return true;
+
+      const tabUrl = tab.url || tab.pendingUrl;
+      if (!tabUrl) return false;
+
+      return new URL(tabUrl).hostname === result.websiteDomain;
+    } catch {
+      return false;
+    }
+  }
+
+  private async renderResult(result: LatestOtpResult, options: { closeOnAutoFill?: boolean } = {}): Promise<void> {
     // Guard against the same result arriving via both the awaited response and
     // the onChanged listener (or a restore), which would double-copy.
     if (result.requestId && result.requestId === this.handledRequestId) return;
@@ -444,18 +488,33 @@ class PopupController {
     if (result.success && result.otp) {
       const copied = await this.copyToClipboard(result.otp);
       const suffix = copied ? ' & copied' : '';
-      const message = result.autoFillResult?.success
+      const autoFilled = this.isAutoFilledResult(result);
+      const message = autoFilled
         ? `OTP auto-filled${suffix}: ${result.otp}`
         : copied
           ? `OTP copied to clipboard: ${result.otp}`
           : `OTP: ${result.otp}`;
 
       this.showStatus(message, 'success');
+      if (!autoFilled) await extensionApi.storage.local.remove(LATEST_RESULT_KEY);
+      if (autoFilled && options.closeOnAutoFill !== false) await this.returnFocusToPageAndClose();
+      return;
     } else {
       this.showStatus(result.message || 'No OTP found in recent emails', 'error');
     }
 
     await extensionApi.storage.local.remove(LATEST_RESULT_KEY);
+  }
+
+  private async returnFocusToPageAndClose(): Promise<void> {
+    try {
+      const tab = await this.getActiveTab();
+      if (tab.id) await extensionApi.tabs.update(tab.id, { active: true });
+    } catch (error) {
+      console.log('Could not refocus page after auto-fill:', error);
+    } finally {
+      window.close();
+    }
   }
 
   private async copyToClipboard(text: string): Promise<boolean> {

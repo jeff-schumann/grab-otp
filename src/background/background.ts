@@ -67,6 +67,8 @@ interface LatestOtpResult {
   success: boolean;
   otp?: string;
   domain: string;
+  websiteDomain?: string;
+  tabId?: number;
   // Only populated for failures; the popup composes its own success copy
   // (which depends on clipboard state it alone knows about).
   message?: string;
@@ -116,8 +118,8 @@ const chromeStorage = {
   local: {
     get: (keys: string | string[]): Promise<Record<string, unknown>> => {
       return new Promise(resolve => {
-        const get = chrome.storage.local.get as (storageKeys: string | string[], callback: (items: Record<string, unknown>) => void) => void;
-        get(keys, resolve);
+        const get = chrome.storage.local.get as (this: chrome.storage.StorageArea, storageKeys: string | string[], callback: (items: Record<string, unknown>) => void) => void;
+        get.call(chrome.storage.local, keys, resolve);
       });
     },
     set: (items: Record<string, unknown>): Promise<void> => {
@@ -318,6 +320,10 @@ async function processOTPRequest(request: OtpRequestContext): Promise<LatestOtpR
   try {
     const result = await otpFetcher.fetchOTPForDomain(request.searchDomain);
     const activeEmail = await accountManager.getActiveAccountEmail();
+    const resultContext = {
+      websiteDomain: request.websiteDomain,
+      ...(request.tabId !== undefined ? { tabId: request.tabId } : {})
+    };
 
     const latest: LatestOtpResult = result.success && result.otp
       ? {
@@ -325,6 +331,7 @@ async function processOTPRequest(request: OtpRequestContext): Promise<LatestOtpR
         success: true,
         otp: result.otp,
         domain: request.searchDomain,
+        ...resultContext,
         autoFillResult: request.autoFill ? await sendOtpToBridge(request, result.otp) : undefined,
         accountEmail: activeEmail,
         timestamp: Date.now()
@@ -333,6 +340,7 @@ async function processOTPRequest(request: OtpRequestContext): Promise<LatestOtpR
         requestId: request.requestId,
         success: false,
         domain: request.searchDomain,
+        ...resultContext,
         message: result.error || `No OTP found in recent emails for ${request.searchDomain}`,
         accountEmail: activeEmail,
         timestamp: Date.now()
@@ -347,6 +355,8 @@ async function processOTPRequest(request: OtpRequestContext): Promise<LatestOtpR
       requestId: request.requestId,
       success: false,
       domain: request.searchDomain,
+      websiteDomain: request.websiteDomain,
+      ...(request.tabId !== undefined ? { tabId: request.tabId } : {}),
       message: `Error: ${(error as Error).message}`,
       timestamp: Date.now()
     };
