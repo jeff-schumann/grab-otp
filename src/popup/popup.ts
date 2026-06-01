@@ -29,16 +29,22 @@ interface LatestOtpResult {
   success: boolean;
   otp?: string;
   domain: string;
-  message: string;
+  message?: string;
   autoFillResult?: OtpFillResult;
   accountEmail?: string | null;
   timestamp: number;
 }
 
+interface InFlightRequest {
+  requestId: string;
+  websiteDomain: string;
+  startedAt: number;
+}
+
 interface FetchOtpStartResponse {
   success: boolean;
-  pending?: boolean;
   requestId?: string;
+  result?: LatestOtpResult;
   error?: string;
 }
 
@@ -58,6 +64,7 @@ const extensionGlobal = globalThis as typeof globalThis & {
 
 const extensionApi = (extensionGlobal.chrome ?? extensionGlobal.browser) as ExtensionApi;
 const LATEST_RESULT_KEY = 'latest_otp_result';
+const IN_FLIGHT_KEY = 'otp_request_in_flight';
 const RESULT_TTL_MS = 60 * 1000;
 
 class PopupController {
@@ -79,8 +86,8 @@ class PopupController {
   private addAccountBtn: HTMLButtonElement;
   private currentWebsiteDomain = '';
   private isDropdownOpen = false;
-  private resultPollingInterval: number | null = null;
-  private resultPollingTimeout: number | null = null;
+  private handledRequestId: string | null = null;
+  private inFlightSafetyTimer: number | null = null;
 
   constructor() {
     this.statusElement = document.getElementById('status')!;
@@ -104,8 +111,17 @@ class PopupController {
   }
 
   private async init(): Promise<void> {
+    // React the moment the background stores a result. This is what lets a
+    // request interrupted by re-auth (which closed the popup) finish on its own
+    // when the popup is reopened, instead of needing a second click.
+    extensionApi.storage.onChanged.addListener((changes, area) => {
+      if (area !== 'local') return;
+      const updated = changes[LATEST_RESULT_KEY]?.newValue as LatestOtpResult | undefined;
+      if (updated) void this.renderResult(updated);
+    });
+
     await this.loadAccounts();
-    await this.checkForRecentResults();
+    await this.restoreRequestState();
     await this.checkForUpdates();
     await this.displayCurrentDomain();
     await this.loadAutoFillPreference();
@@ -308,6 +324,10 @@ class PopupController {
         frameIds = await this.injectBridge(tab.id);
       }
 
+      // The background resolves this only after the whole fetch + fill cycle
+      // completes. If an interactive re-auth closes the popup first, this await
+      // never resolves here — the onChanged listener / restore path takes over
+      // on the next open. So this branch only runs when the popup stayed open.
       const response = await extensionApi.runtime.sendMessage({
         action: 'fetchOTP',
         domain: searchDomain,
@@ -324,12 +344,11 @@ class PopupController {
         return;
       }
 
-      this.startResultPolling(response.requestId || requestId);
+      if (response.result) await this.renderResult(response.result);
     } catch (error) {
       console.error('Error handling OTP request:', error);
       this.showStatus(`Error: ${(error as Error).message}`, 'error');
       this.setLoading(false);
-      this.stopResultPolling();
     }
   }
 
@@ -373,61 +392,70 @@ class PopupController {
     return [];
   }
 
-  private startResultPolling(requestId: string): void {
-    this.stopResultPolling();
-
-    this.resultPollingInterval = window.setInterval(() => {
-      this.checkForRecentResults(requestId);
-    }, 500);
-
-    this.resultPollingTimeout = window.setTimeout(() => {
-      this.stopResultPolling();
-      this.setLoading(false);
-      this.showStatus('Still searching. Reopen the extension to check the result.', 'loading');
-    }, RESULT_TTL_MS);
-  }
-
-  private stopResultPolling(): void {
-    if (this.resultPollingInterval !== null) {
-      window.clearInterval(this.resultPollingInterval);
-      this.resultPollingInterval = null;
-    }
-
-    if (this.resultPollingTimeout !== null) {
-      window.clearTimeout(this.resultPollingTimeout);
-      this.resultPollingTimeout = null;
-    }
-  }
-
-  private async checkForRecentResults(requestId?: string): Promise<void> {
+  // On open, recover a result produced while the popup was closed, or reflect a
+  // request still in flight (e.g. mid re-auth) so the user waits rather than
+  // re-clicking and starting over.
+  private async restoreRequestState(): Promise<void> {
     try {
-      const result = await extensionApi.storage.local.get([LATEST_RESULT_KEY]) as { [LATEST_RESULT_KEY]?: LatestOtpResult };
-      const latestResult = result[LATEST_RESULT_KEY];
+      const stored = await extensionApi.storage.local.get([LATEST_RESULT_KEY, IN_FLIGHT_KEY]) as {
+        [LATEST_RESULT_KEY]?: LatestOtpResult;
+        [IN_FLIGHT_KEY]?: InFlightRequest;
+      };
 
-      if (!latestResult || Date.now() - latestResult.timestamp > RESULT_TTL_MS) return;
-      if (requestId && latestResult.requestId !== requestId) return;
-
-      this.stopResultPolling();
-      this.setLoading(false);
-
-      if (latestResult.success && latestResult.otp) {
-        const copied = await this.copyToClipboard(latestResult.otp);
-        const suffix = copied ? ' & copied' : '';
-        const message = latestResult.autoFillResult?.success
-          ? `OTP auto-filled${suffix}: ${latestResult.otp}`
-          : copied
-            ? `OTP copied to clipboard: ${latestResult.otp}`
-            : latestResult.message;
-
-        this.showStatus(message, 'success');
-      } else {
-        this.showStatus(latestResult.message, 'error');
+      const latestResult = stored[LATEST_RESULT_KEY];
+      if (latestResult && Date.now() - latestResult.timestamp <= RESULT_TTL_MS) {
+        await this.renderResult(latestResult);
+        return;
       }
 
-      await extensionApi.storage.local.remove(LATEST_RESULT_KEY);
+      const inFlight = stored[IN_FLIGHT_KEY];
+      if (inFlight && Date.now() - inFlight.startedAt <= RESULT_TTL_MS) {
+        this.setLoading(true);
+        this.showStatus('Finishing sign-in and grabbing your code…', 'loading');
+
+        // Safety net: if the result never lands (e.g. the worker was lost mid
+        // auth), re-enable the button at the TTL so the user can retry.
+        const remaining = RESULT_TTL_MS - (Date.now() - inFlight.startedAt);
+        this.inFlightSafetyTimer = window.setTimeout(() => {
+          this.setLoading(false);
+          this.showStatus('That took longer than expected. Try grabbing the code again.', 'error');
+        }, remaining);
+      }
     } catch (error) {
-      console.log('Could not check OTP result:', error);
+      console.log('Could not restore OTP request state:', error);
     }
+  }
+
+  private async renderResult(result: LatestOtpResult): Promise<void> {
+    // Guard against the same result arriving via both the awaited response and
+    // the onChanged listener (or a restore), which would double-copy.
+    if (result.requestId && result.requestId === this.handledRequestId) return;
+    this.handledRequestId = result.requestId ?? null;
+
+    if (Date.now() - result.timestamp > RESULT_TTL_MS) return;
+
+    if (this.inFlightSafetyTimer !== null) {
+      window.clearTimeout(this.inFlightSafetyTimer);
+      this.inFlightSafetyTimer = null;
+    }
+
+    this.setLoading(false);
+
+    if (result.success && result.otp) {
+      const copied = await this.copyToClipboard(result.otp);
+      const suffix = copied ? ' & copied' : '';
+      const message = result.autoFillResult?.success
+        ? `OTP auto-filled${suffix}: ${result.otp}`
+        : copied
+          ? `OTP copied to clipboard: ${result.otp}`
+          : `OTP: ${result.otp}`;
+
+      this.showStatus(message, 'success');
+    } else {
+      this.showStatus(result.message || 'No OTP found in recent emails', 'error');
+    }
+
+    await extensionApi.storage.local.remove(LATEST_RESULT_KEY);
   }
 
   private async copyToClipboard(text: string): Promise<boolean> {

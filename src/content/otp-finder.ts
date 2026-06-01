@@ -176,6 +176,11 @@ function isVisible(input: HTMLInputElement): boolean {
   // Test DOMs and some offscreen-but-usable controls do not calculate useful
   // layout dimensions. Fall back to style/attribute checks instead of treating
   // every zero-sized rect as invisible.
+  //
+  // Trade-off: a honeypot field hidden purely by layout (rather than by
+  // display/visibility/opacity, which isElementHiddenByStyle catches) can still
+  // pass this check. Negative-keyword scoring is the backstop that keeps such
+  // fields from winning over a real OTP input.
   return true;
 }
 

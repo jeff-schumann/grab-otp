@@ -2,6 +2,7 @@
 
 import { AccountManager, TOKEN_REFRESH_ALARM } from '../shared/account-manager';
 import type { OtpFillResult } from '../content/otp-finder';
+import { getGmailMessageTextContent } from './gmail-message-text';
 
 declare const __CHROME_CLIENT_ID__: string;
 declare const __CHROME_CLIENT_SECRET__: string;
@@ -52,15 +53,13 @@ interface GmailMessageResponse {
   snippet?: string;
 }
 
-interface PendingOtpRequest {
+interface OtpRequestContext {
   requestId: string;
   tabId?: number;
   frameIds: number[];
   websiteDomain: string;
   searchDomain: string;
   autoFill: boolean;
-  createdAt: number;
-  expiresAt: number;
 }
 
 interface LatestOtpResult {
@@ -68,10 +67,21 @@ interface LatestOtpResult {
   success: boolean;
   otp?: string;
   domain: string;
-  message: string;
+  // Only populated for failures; the popup composes its own success copy
+  // (which depends on clipboard state it alone knows about).
+  message?: string;
   autoFillResult?: OtpFillResult;
   accountEmail?: string | null;
   timestamp: number;
+}
+
+// Marker the popup reads on reopen so a request interrupted by an interactive
+// re-auth (which closes the popup) is shown as in-progress instead of being
+// restarted with a second click.
+interface InFlightRequest {
+  requestId: string;
+  websiteDomain: string;
+  startedAt: number;
 }
 
 interface FetchOtpMessage {
@@ -85,8 +95,7 @@ interface FetchOtpMessage {
 }
 
 const LATEST_RESULT_KEY = 'latest_otp_result';
-const PENDING_REQUEST_KEY = 'pending_otp_request';
-const REQUEST_TTL_MS = 2 * 60 * 1000;
+const IN_FLIGHT_KEY = 'otp_request_in_flight';
 
 const chromeIdentity = {
   getRedirectURL: () => chrome.identity.getRedirectURL(),
@@ -213,7 +222,7 @@ class GmailOTPFetcher {
   }
 
   private extractOTP(message: GmailMessageResponse): string | null {
-    const content = this.getMessageTextContent(message);
+    const content = getGmailMessageTextContent(message);
     const searchText = `${message.snippet || ''}\n${content}`;
 
     for (const pattern of this.OTP_PATTERNS) {
@@ -225,79 +234,47 @@ class GmailOTPFetcher {
     return null;
   }
 
-  private getMessageTextContent(message: GmailMessageResponse): string {
-    const parts = message.payload.parts || [];
-    const textParts: string[] = [];
-
-    const collectText = (part: { body: { data?: string }; mimeType: string; parts?: Array<{ body: { data?: string }; mimeType: string }> }): void => {
-      if (part.mimeType === 'text/plain' && part.body.data) {
-        textParts.push(this.decodeBase64(part.body.data));
-      }
-
-      part.parts?.forEach(collectText);
-    };
-
-    parts.forEach(collectText);
-
-    if (message.payload.body?.data) {
-      textParts.push(this.decodeBase64(message.payload.body.data));
-    }
-
-    return textParts.join('\n');
-  }
-
-  private decodeBase64(data: string): string {
-    try {
-      const base64 = data.replace(/-/g, '+').replace(/_/g, '/');
-      return decodeURIComponent(escape(atob(base64)));
-    } catch (error) {
-      console.error('Error decoding base64:', error);
-      return '';
-    }
-  }
 }
 
 const otpFetcher = new GmailOTPFetcher();
-const pendingOtpRequests = new Map<string, PendingOtpRequest>();
 
 function generateRequestId(): string {
   return crypto.randomUUID?.() ?? `otp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function createPendingRequest(message: FetchOtpMessage): PendingOtpRequest {
-  const createdAt = Date.now();
+function createRequestContext(message: FetchOtpMessage): OtpRequestContext {
   return {
     requestId: message.requestId || generateRequestId(),
     tabId: message.tabId,
     frameIds: Array.from(new Set(message.frameIds || [])).filter(frameId => frameId >= 0),
     websiteDomain: message.websiteDomain || message.domain,
     searchDomain: message.domain,
-    autoFill: Boolean(message.autoFill && message.tabId),
-    createdAt,
-    expiresAt: createdAt + REQUEST_TTL_MS
+    autoFill: Boolean(message.autoFill && message.tabId)
   };
-}
-
-async function storePendingRequest(request: PendingOtpRequest): Promise<void> {
-  pendingOtpRequests.set(request.requestId, request);
-  await chromeStorage.local.set({ [PENDING_REQUEST_KEY]: request });
-}
-
-async function clearPendingRequest(requestId: string): Promise<void> {
-  pendingOtpRequests.delete(requestId);
-
-  const stored = await chromeStorage.local.get([PENDING_REQUEST_KEY]);
-  const pending = stored[PENDING_REQUEST_KEY] as PendingOtpRequest | undefined;
-  if (pending?.requestId === requestId) {
-    await chromeStorage.local.remove(PENDING_REQUEST_KEY);
-  }
 }
 
 async function storeLatestResult(result: LatestOtpResult): Promise<void> {
   await chromeStorage.local.set({ [LATEST_RESULT_KEY]: result });
 }
 
-async function sendOtpToBridge(request: PendingOtpRequest, otp: string): Promise<OtpFillResult> {
+async function setInFlight(request: OtpRequestContext): Promise<void> {
+  const marker: InFlightRequest = {
+    requestId: request.requestId,
+    websiteDomain: request.websiteDomain,
+    startedAt: Date.now()
+  };
+  await chromeStorage.local.set({ [IN_FLIGHT_KEY]: marker });
+}
+
+async function clearInFlight(requestId: string): Promise<void> {
+  const stored = await chromeStorage.local.get([IN_FLIGHT_KEY]);
+  const current = stored[IN_FLIGHT_KEY] as InFlightRequest | undefined;
+  if (!current || current.requestId === requestId) {
+    await chromeStorage.local.remove(IN_FLIGHT_KEY);
+  }
+}
+
+async function sendOtpToBridge(request: OtpRequestContext, otp: string): Promise<OtpFillResult> {
   if (!request.tabId) {
     return { success: false, strategy: 'none', reason: 'missing-tab' };
   }
@@ -334,52 +311,49 @@ async function sendOtpToBridge(request: PendingOtpRequest, otp: string): Promise
   return { success: false, strategy: 'none', reason };
 }
 
-function buildSuccessMessage(otp: string, request: PendingOtpRequest, fillResult?: OtpFillResult): string {
-  if (!request.autoFill) return `OTP: ${otp} (ready to copy)`;
-  if (fillResult?.success) return `OTP: ${otp} (auto-filled)`;
-  return `OTP: ${otp} (found, auto-fill unavailable)`;
-}
-
-async function processOTPRequest(request: PendingOtpRequest): Promise<void> {
+async function processOTPRequest(request: OtpRequestContext): Promise<LatestOtpResult> {
   console.log('[Chrome Background] Processing OTP request:', request);
+  await setInFlight(request);
 
   try {
     const result = await otpFetcher.fetchOTPForDomain(request.searchDomain);
     const activeEmail = await accountManager.getActiveAccountEmail();
 
-    if (result.success && result.otp) {
-      const fillResult = request.autoFill ? await sendOtpToBridge(request, result.otp) : undefined;
-
-      await storeLatestResult({
+    const latest: LatestOtpResult = result.success && result.otp
+      ? {
         requestId: request.requestId,
         success: true,
         otp: result.otp,
         domain: request.searchDomain,
-        message: buildSuccessMessage(result.otp, request, fillResult),
-        autoFillResult: fillResult,
+        autoFillResult: request.autoFill ? await sendOtpToBridge(request, result.otp) : undefined,
         accountEmail: activeEmail,
         timestamp: Date.now()
-      });
-    } else {
-      await storeLatestResult({
+      }
+      : {
         requestId: request.requestId,
         success: false,
         domain: request.searchDomain,
         message: result.error || `No OTP found in recent emails for ${request.searchDomain}`,
         accountEmail: activeEmail,
         timestamp: Date.now()
-      });
-    }
+      };
+
+    // Store the result before the finally clears the in-flight marker, so a
+    // reopened popup never observes a gap with neither value present.
+    await storeLatestResult(latest);
+    return latest;
   } catch (error) {
-    await storeLatestResult({
+    const latest: LatestOtpResult = {
       requestId: request.requestId,
       success: false,
       domain: request.searchDomain,
       message: `Error: ${(error as Error).message}`,
       timestamp: Date.now()
-    });
+    };
+    await storeLatestResult(latest);
+    return latest;
   } finally {
-    await clearPendingRequest(request.requestId);
+    await clearInFlight(request.requestId);
   }
 }
 
@@ -420,12 +394,17 @@ chrome.runtime.onMessage.addListener((message: { action?: string } & Record<stri
 
   if (message.action === 'fetchOTP') {
     (async () => {
-      const request = createPendingRequest(message as unknown as FetchOtpMessage);
-      await storePendingRequest(request);
-      void processOTPRequest(request).catch(error => {
+      try {
+        const request = createRequestContext(message as unknown as FetchOtpMessage);
+        // Resolves after the full fetch + (optional) re-auth + fill cycle. If an
+        // interactive re-auth closed the popup, this response is dropped and the
+        // popup recovers the stored result on its next open instead.
+        const result = await processOTPRequest(request);
+        sendResponse({ success: true, requestId: request.requestId, result });
+      } catch (error) {
         console.error('[Chrome Background] OTP request processing failed:', error);
-      });
-      sendResponse({ success: true, pending: true, requestId: request.requestId });
+        sendResponse({ success: false, error: (error as Error).message });
+      }
     })();
     return true;
   }
