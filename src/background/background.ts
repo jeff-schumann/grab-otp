@@ -3,6 +3,7 @@
 import { AccountManager, TOKEN_REFRESH_ALARM } from '../shared/account-manager';
 import type { OtpFillResult } from '../content/otp-finder';
 import { getGmailMessageTextContent } from './gmail-message-text';
+import { extractOtpFromText } from './otp-extractor';
 
 declare const __CHROME_CLIENT_ID__: string;
 declare const __CHROME_CLIENT_SECRET__: string;
@@ -139,16 +140,6 @@ const accountManager = new AccountManager(
 );
 
 class GmailOTPFetcher {
-  private readonly OTP_PATTERNS = [
-    /verification code[:\s]*(\d{4,8})/gi,
-    /security code[:\s]*(\d{4,8})/gi,
-    /your code[:\s]*(\d{4,8})/gi,
-    /otp[:\s]*(\d{4,8})/gi,
-    /pin[:\s]*(\d{4,8})/gi,
-    /\b(\d{6})\b/g,
-    /\b(\d{4})\b/g,
-    /\b(\d{8})\b/g
-  ];
 
   public async fetchOTPForDomain(domain: string): Promise<OTPResponse> {
     try {
@@ -226,14 +217,7 @@ class GmailOTPFetcher {
   private extractOTP(message: GmailMessageResponse): string | null {
     const content = getGmailMessageTextContent(message);
     const searchText = `${message.snippet || ''}\n${content}`;
-
-    for (const pattern of this.OTP_PATTERNS) {
-      pattern.lastIndex = 0;
-      const match = pattern.exec(searchText);
-      if (match?.[1]) return match[1];
-    }
-
-    return null;
+    return extractOtpFromText(searchText);
   }
 
 }

@@ -5,6 +5,8 @@ import type { AccountInfo } from '../shared/account-manager';
 import { generateCodeChallenge, generateCodeVerifier, exchangeCodeForTokens } from '../shared/pkce';
 import { GMAIL_SCOPE, REQUIRED_SCOPE, getTokenScopes, getUserEmail, refreshToken } from '../shared/oauth';
 import { checkForUpdates } from '../shared/version-check';
+import { getGmailMessageTextContent } from './gmail-message-text';
+import { extractOtpFromText } from './otp-extractor';
 
 declare const __SAFARI_CLIENT_ID__: string;
 declare const __SAFARI_APP_BUNDLE_ID__: string;
@@ -439,15 +441,6 @@ async function sendNativeOAuthMessage(authUrl: string, callbackScheme: string): 
 }
 
 class SafariGmailOTPFetcher {
-  private readonly OTP_PATTERNS = [
-    /\b(\d{6})\b/g,
-    /\b(\d{4})\b/g,
-    /\b(\d{8})\b/g,
-    /verification code[:\s]*(\d+)/gi,
-    /your code[:\s]*(\d+)/gi,
-    /otp[:\s]*(\d+)/gi,
-    /pin[:\s]*(\d+)/gi
-  ];
 
   constructor(private accountStore: SafariAccountStore) {}
 
@@ -522,49 +515,9 @@ class SafariGmailOTPFetcher {
   }
 
   private extractOTP(message: GmailMessageResponse): string | null {
-    const textContent = this.getMessageTextContent(message);
-
-    for (const pattern of this.OTP_PATTERNS) {
-      const matches = textContent.match(pattern);
-      if (matches) {
-        for (const match of matches) {
-          const code = match.replace(/\D/g, '');
-          if (code.length >= 4 && code.length <= 8) {
-            return code;
-          }
-        }
-      }
-    }
-
-    return null;
-  }
-
-  private getMessageTextContent(message: GmailMessageResponse): string {
-    let content = message.snippet || '';
-
-    if (message.payload.body?.data) {
-      content += ' ' + this.decodeBase64(message.payload.body.data);
-    }
-
-    if (message.payload.parts) {
-      for (const part of message.payload.parts) {
-        if ((part.mimeType === 'text/plain' || part.mimeType === 'text/html') && part.body.data) {
-          content += ' ' + this.decodeBase64(part.body.data);
-        }
-      }
-    }
-
-    return content;
-  }
-
-  private decodeBase64(data: string): string {
-    try {
-      const base64 = data.replace(/-/g, '+').replace(/_/g, '/');
-      return decodeURIComponent(escape(atob(base64)));
-    } catch (error) {
-      console.error('[Safari Background] Error decoding base64 data:', error);
-      return '';
-    }
+    const content = getGmailMessageTextContent(message);
+    const searchText = `${message.snippet || ''}\n${content}`;
+    return extractOtpFromText(searchText);
   }
 }
 

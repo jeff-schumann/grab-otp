@@ -2,6 +2,8 @@
 import { checkForUpdates } from '../shared/version-check';
 import { AccountManager, TOKEN_REFRESH_ALARM } from '../shared/account-manager';
 import { type OtpFillResult } from '../content/otp-finder';
+import { getGmailMessageTextContent } from './gmail-message-text';
+import { extractOtpFromText } from './otp-extractor';
 
 declare const browser: any;
 declare const __FIREFOX_CLIENT_ID__: string;
@@ -43,16 +45,6 @@ const accountManager = new AccountManager(
 );
 
 class FirefoxGmailOTPFetcher {
-  private readonly OTP_PATTERNS = [
-    /\b(\d{6})\b/g,           // 6-digit codes
-    /\b(\d{4})\b/g,           // 4-digit codes
-    /\b(\d{8})\b/g,           // 8-digit codes
-    /verification code[:\s]*(\d+)/gi,
-    /your code[:\s]*(\d+)/gi,
-    /otp[:\s]*(\d+)/gi,
-    /pin[:\s]*(\d+)/gi
-  ];
-
   // Fire-and-forget OTP fetch with full background processing
   async processOTPRequest(domain: string, requestTimestamp: number, autoFill: boolean = false, tabId?: number): Promise<void> {
     console.log(`Starting OTP fetch for domain: ${domain}, autoFill: ${autoFill}`);
@@ -324,53 +316,9 @@ class FirefoxGmailOTPFetcher {
   }
 
   private extractOTP(message: GmailMessageResponse): string | null {
-    const textContent = this.getMessageTextContent(message);
-
-    for (const pattern of this.OTP_PATTERNS) {
-      const matches = textContent.match(pattern);
-      if (matches) {
-        // Return the first match that looks like an OTP
-        for (const match of matches) {
-          const code = match.replace(/\D/g, ''); // Extract only digits
-          if (code.length >= 4 && code.length <= 8) {
-            return code;
-          }
-        }
-      }
-    }
-
-    return null;
-  }
-
-  private getMessageTextContent(message: GmailMessageResponse): string {
-    let content = message.snippet || '';
-
-    // Try to get the full message body
-    if (message.payload.body?.data) {
-      content += ' ' + this.decodeBase64(message.payload.body.data);
-    }
-
-    // Check message parts for text content
-    if (message.payload.parts) {
-      for (const part of message.payload.parts) {
-        if (part.mimeType === 'text/plain' || part.mimeType === 'text/html') {
-          content += ' ' + this.decodeBase64(part.body.data);
-        }
-      }
-    }
-
-    return content;
-  }
-
-  private decodeBase64(data: string): string {
-    try {
-      // Gmail API returns base64url encoded data
-      const base64 = data.replace(/-/g, '+').replace(/_/g, '/');
-      return decodeURIComponent(escape(atob(base64)));
-    } catch (error) {
-      console.error('Error decoding base64 data:', error);
-      return '';
-    }
+    const content = getGmailMessageTextContent(message);
+    const searchText = `${message.snippet || ''}\n${content}`;
+    return extractOtpFromText(searchText);
   }
 
 }
