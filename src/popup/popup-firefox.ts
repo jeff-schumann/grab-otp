@@ -1,11 +1,32 @@
 // Firefox popup script - no imports, uses global browser from polyfill
 declare const browser: any;
 
+const RESULT_TTL_MS = 60 * 1000;
+const AUTO_FILLED_RESULT_TTL_MS = 5 * 1000;
+
 interface OTPRequest {
   action: string;
   domain: string;
   autoFill?: boolean;
   tabId?: number;
+  timestamp: number;
+}
+
+interface OtpFillResult {
+  success: boolean;
+  strategy: 'segmented' | 'single' | 'focused' | 'none';
+  reason?: string;
+  score?: number;
+}
+
+interface LatestOtpResult {
+  success: boolean;
+  otp?: string;
+  domain: string;
+  message?: string;
+  tabId?: number;
+  autoFillResult?: OtpFillResult;
+  accountEmail?: string | null;
   timestamp: number;
 }
 
@@ -31,6 +52,7 @@ class FirefoxPopupController {
   private updateBanner: HTMLElement;
   private updateMessage: HTMLElement;
   private resultPollingInterval: number | null = null;
+  private hasClosed: boolean = false;
   private settingsToggle: HTMLButtonElement;
   private overridePanel: HTMLElement;
   private overrideInput: HTMLInputElement;
@@ -108,8 +130,8 @@ class FirefoxPopupController {
       }
     });
 
-    // Check for recent OTP results when popup opens
-    await this.checkForRecentResults();
+    // Check for recent OTP results when popup opens (restore path)
+    await this.checkForRecentResults(true);
   }
 
   // Account management methods
@@ -280,6 +302,11 @@ class FirefoxPopupController {
   }
 
   private async handleGrabOTP() {
+    // Clear any stale result first, so the first poll tick can't read a
+    // lingering auto-filled success from a previous grab and close the popup
+    // before the new code arrives.
+    await browser.storage.local.remove('latest_otp_result');
+
     // Check if we have any accounts first
     const accountsResponse = await browser.runtime.sendMessage({ action: 'getAccounts' }) as AccountsResponse;
     if (Object.keys(accountsResponse.accounts).length === 0) {
@@ -344,29 +371,95 @@ class FirefoxPopupController {
     }
   }
 
-  private async checkForRecentResults() {
+  // Called both as a fresh-open restore (isRestore=true, from init) and as the
+  // active poll while a grab is in flight (isRestore=false, from polling).
+  private async checkForRecentResults(isRestore: boolean = false) {
     try {
-      const result = await browser.storage.local.get('latest_otp_result');
-      const latestResult = result['latest_otp_result'];
+      const stored = await browser.storage.local.get('latest_otp_result');
+      const result = stored['latest_otp_result'] as LatestOtpResult | undefined;
+      if (!result) return;
 
-      if (latestResult && Date.now() - latestResult.timestamp < 60000) { // Within 1 minute
-        if (latestResult.success && latestResult.otp) {
-          this.showStatus(`${latestResult.message}`, 'success');
-          // Auto-select the OTP text for easy copying
-          this.statusElement.setAttribute('data-otp', latestResult.otp);
-        } else {
-          this.showStatus(`${latestResult.message}`, 'error');
-        }
+      // Drop anything past the 1-minute window.
+      if (Date.now() - result.timestamp >= RESULT_TTL_MS) {
+        await browser.storage.local.remove('latest_otp_result');
+        return;
+      }
 
-        // Stop loading state and polling when result is shown
+      const autoFilled = this.isAutoFilledResult(result);
+
+      if (!isRestore) {
+        // Active path: the result just landed while the popup is open & polling.
+        this.displayResult(result);
         this.setLoading(false);
         this.stopResultPolling();
 
-        // Clear the result after showing it
+        if (autoFilled) {
+          if (!this.hasClosed) {
+            this.hasClosed = true;
+            await this.returnFocusToPageAndClose(result.tabId);
+          }
+          // Leave the result in storage so the 5s same-tab restore can find it.
+          return;
+        }
+
         await browser.storage.local.remove('latest_otp_result');
+        return;
       }
+
+      // Restore path: the popup opened fresh and found a recent result.
+      this.setLoading(false);
+      this.stopResultPolling();
+
+      if (autoFilled) {
+        const fresh = Date.now() - result.timestamp <= AUTO_FILLED_RESULT_TTL_MS;
+        if (fresh && await this.isSamePageAsResult(result)) {
+          // Re-show the auto-filled result, but do NOT close again.
+          this.displayResult(result);
+        } else {
+          await browser.storage.local.remove('latest_otp_result');
+        }
+        return;
+      }
+
+      this.displayResult(result);
+      await browser.storage.local.remove('latest_otp_result');
     } catch (error) {
       console.log('Could not check recent results:', error);
+    }
+  }
+
+  private displayResult(result: LatestOtpResult) {
+    if (result.success && result.otp) {
+      this.showStatus(`${result.message}`, 'success');
+      // Auto-select the OTP text for easy copying
+      this.statusElement.setAttribute('data-otp', result.otp);
+    } else {
+      this.showStatus(`${result.message}`, 'error');
+    }
+  }
+
+  private isAutoFilledResult(result: LatestOtpResult): boolean {
+    return result.success && Boolean(result.otp) && result.autoFillResult?.success === true;
+  }
+
+  // tabId-only same-page guard: "same page" means "same tab".
+  private async isSamePageAsResult(result: LatestOtpResult): Promise<boolean> {
+    if (result.tabId === undefined) return true;
+    try {
+      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+      return tab?.id === result.tabId;
+    } catch {
+      return false;
+    }
+  }
+
+  private async returnFocusToPageAndClose(tabId?: number) {
+    try {
+      if (tabId !== undefined) await browser.tabs.update(tabId, { active: true });
+    } catch (error) {
+      console.log('Could not refocus page after auto-fill:', error);
+    } finally {
+      window.close();
     }
   }
 
@@ -382,7 +475,7 @@ class FirefoxPopupController {
   private startResultPolling() {
     // Poll every 500ms for results while loading
     this.resultPollingInterval = window.setInterval(async () => {
-      await this.checkForRecentResults();
+      await this.checkForRecentResults(false);
     }, 500);
 
     // Stop polling after 30 seconds to avoid infinite polling

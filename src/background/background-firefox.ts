@@ -1,6 +1,7 @@
 // Firefox background script - uses global browser from polyfill
 import { checkForUpdates } from '../shared/version-check';
 import { AccountManager, TOKEN_REFRESH_ALARM } from '../shared/account-manager';
+import { type OtpFillResult } from '../content/otp-finder';
 
 declare const browser: any;
 declare const __FIREFOX_CLIENT_ID__: string;
@@ -61,31 +62,36 @@ class FirefoxGmailOTPFetcher {
 
       if (result.success && result.otp) {
         if (autoFill && tabId) {
-          // Try auto-fill via direct message to content script
+          // Capture the bridge's fill result so the popup can decide whether to
+          // close. Mirrors Chrome's sendOtpToBridge: never throws — a missing
+          // bridge or a failed fill resolves to success:false instead.
+          let autoFillResult: OtpFillResult | undefined;
           try {
             console.log('[Firefox Background] Sending OTP to bridge for auto-fill');
-            await browser.tabs.sendMessage(tabId, { action: 'fillOTP', otp: result.otp });
-
-            // Always copy to clipboard as backup
-            await this.copyToClipboard(result.otp);
-
-            await this.showPopupWithResult({
-              success: true,
-              otp: result.otp,
-              domain: domain,
-              message: `OTP: ${result.otp} (auto-filled & copied)`
-            });
+            autoFillResult = await browser.tabs.sendMessage(
+              tabId,
+              { action: 'fillOTP', otp: result.otp }
+            ) as OtpFillResult | undefined;
           } catch (error) {
             console.log('[Firefox Background] Bridge not available, falling back to clipboard:', error);
-            // Fall back to clipboard if bridge not available
-            await this.copyToClipboard(result.otp);
-            await this.showPopupWithResult({
-              success: true,
-              otp: result.otp,
-              domain: domain,
-              message: `OTP: ${result.otp} (copied to clipboard)`
-            });
+            autoFillResult = { success: false, strategy: 'none', reason: (error as Error).message };
           }
+
+          // Always copy to clipboard as backup
+          await this.copyToClipboard(result.otp);
+
+          const message = autoFillResult?.success
+            ? `OTP: ${result.otp} (auto-filled & copied)`
+            : `OTP: ${result.otp} (copied to clipboard)`;
+
+          await this.showPopupWithResult({
+            success: true,
+            otp: result.otp,
+            domain: domain,
+            message,
+            tabId,
+            autoFillResult
+          });
         } else {
           // Copy to clipboard (original behavior)
           await this.copyToClipboard(result.otp);
@@ -236,6 +242,8 @@ class FirefoxGmailOTPFetcher {
     otp?: string;
     domain: string;
     message: string;
+    tabId?: number;
+    autoFillResult?: OtpFillResult;
   }): Promise<void> {
     try {
       console.log('Storing result and updating badge');
