@@ -82,7 +82,7 @@ See [Privacy Policy](PRIVACY_POLICY.md) for full details.
 |---------|--------|---------|--------|
 | OTP Detection | ✅ | ✅ | ✅ |
 | Clipboard Copy | ✅ | ✅ | ✅ |
-| Auto-Fill | ✅ | ⚠️ Limited | ✅ |
+| Auto-Fill | ✅ | ✅ | ✅ |
 | Badge Notifications | ✅ | ✅ | ✅ |
 
 ## Development
