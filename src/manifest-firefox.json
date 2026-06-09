@@ -11,6 +11,7 @@
     "identity",
     "alarms",
     "https://www.googleapis.com/*",
+    "https://oauth2.googleapis.com/*",
     "https://accounts.google.com/*"
   ],
 

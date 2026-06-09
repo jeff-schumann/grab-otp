@@ -76,6 +76,12 @@ Safari's OAuth redirect URI is derived from the client ID as `com.googleusercont
 
 See [Privacy Policy](PRIVACY_POLICY.md) for full details.
 
+> **On the bundled OAuth client secret:** the secret shipped in the built
+> extension is *intentionally* non-confidential — the flow is secured by PKCE and
+> a locked redirect URI, not by hiding the secret. See
+> [docs/OAUTH_SETUP.md](docs/OAUTH_SETUP.md#-security-the-client-secret-is-not-confidential)
+> before reporting it as a vulnerability.
+
 ## Browser Support
 
 | Feature | Chrome | Firefox | Safari |

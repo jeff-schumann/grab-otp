@@ -7,6 +7,7 @@ import { GMAIL_SCOPE, REQUIRED_SCOPE, getTokenScopes, getUserEmail, refreshToken
 import { checkForUpdates } from '../shared/version-check';
 import { getGmailMessageTextContent } from './gmail-message-text';
 import { extractOtpFromText } from './otp-extractor';
+import { buildSenderQuery } from './gmail-query';
 
 declare const __SAFARI_CLIENT_ID__: string;
 declare const __SAFARI_APP_BUNDLE_ID__: string;
@@ -478,7 +479,7 @@ class SafariGmailOTPFetcher {
   }
 
   private async searchGmailMessages(token: string, userEmail: string, domain: string): Promise<GmailMessage[]> {
-    const query = `from:${domain} OR from:@${domain} newer_than:30m`;
+    const query = `${buildSenderQuery(domain)} newer_than:30m`;
     const url = `https://www.googleapis.com/gmail/v1/users/${encodeURIComponent(userEmail)}/messages?q=${encodeURIComponent(query)}&maxResults=10`;
 
     const response = await fetch(url, {
