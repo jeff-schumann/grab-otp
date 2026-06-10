@@ -1,7 +1,7 @@
 // Account Manager for multi-account Gmail support
 // Handles storage, retrieval, and management of multiple Gmail accounts
 
-import { performPKCEAuth, attemptSilentAuth, refreshToken, getUserEmail, getTokenScopes, OAuthConfig, TokenData, REQUIRED_SCOPE } from './oauth';
+import { performPKCEAuth, attemptSilentAuth, refreshToken, getUserEmail, getGmailProfileEmail, getTokenEmail, getTokenScopes, OAuthConfig, TokenData, REQUIRED_SCOPE } from './oauth';
 
 export interface AccountInfo {
   email: string;
@@ -46,6 +46,7 @@ export class AccountManager {
   private storage: StorageAPI;
   private identity: IdentityAPI;
   private oauthConfig: OAuthConfig;
+  private interactiveAuthPromise: Promise<TokenData | null> | null = null;
 
   constructor(
     storage: StorageAPI,
@@ -60,6 +61,37 @@ export class AccountManager {
       clientSecret,
       redirectUri: identity.getRedirectURL()
     };
+  }
+
+  /**
+   * Launch the interactive PKCE flow, ensuring only one auth window exists at
+   * a time. Concurrent callers share the in-flight flow's result instead of
+   * queueing a second sign-in window behind the first one.
+   */
+  private runInteractiveAuth(): Promise<TokenData | null> {
+    if (!this.interactiveAuthPromise) {
+      this.interactiveAuthPromise = performPKCEAuth(
+        this.oauthConfig,
+        (details) => this.identity.launchWebAuthFlow(details)
+      ).finally(() => {
+        this.interactiveAuthPromise = null;
+      });
+    }
+    return this.interactiveAuthPromise;
+  }
+
+  /**
+   * Resolve the email for an access token. The userinfo endpoint can fail
+   * transiently right after an auth flow; tokeninfo is a separate endpoint
+   * that also reports the account email.
+   */
+  private async resolveEmail(accessToken: string): Promise<string | null> {
+    const gmailEmail = await getGmailProfileEmail(accessToken);
+    if (gmailEmail) return gmailEmail;
+
+    const email = await getUserEmail(accessToken);
+    if (email) return email;
+    return getTokenEmail(accessToken);
   }
 
   /**
@@ -135,26 +167,23 @@ export class AccountManager {
     console.log('[AccountManager] Starting OAuth flow to add new account...');
 
     // Perform PKCE auth with account selection
-    const tokenData = await performPKCEAuth(
-      this.oauthConfig,
-      (details) => this.identity.launchWebAuthFlow(details)
-    );
+    const tokenData = await this.runInteractiveAuth();
 
     if (!tokenData) {
       console.log('[AccountManager] OAuth flow failed');
       return null;
     }
 
-    // Get the user's email
-    const email = await getUserEmail(tokenData.accessToken);
-    if (!email) {
-      console.error('[AccountManager] Failed to get user email after auth');
-      return null;
-    }
-
     // Validate scopes before storing
     if (!await this.hasRequiredScope(tokenData)) {
       console.error('[AccountManager] Token lacks required scope — aborting addAccount');
+      return null;
+    }
+
+    // Get the user's email from Gmail after scope validation.
+    const email = await this.resolveEmail(tokenData.accessToken);
+    if (!email) {
+      console.error('[AccountManager] Failed to get user email after auth');
       return null;
     }
 
@@ -272,12 +301,12 @@ export class AccountManager {
     );
 
     if (silentTokenData) {
-      // Verify this is the same account
-      const silentEmail = await getUserEmail(silentTokenData.accessToken);
-      if (silentEmail === email) {
-        if (!await this.hasRequiredScope(silentTokenData)) {
-          console.warn('[AccountManager] Silent auth token lacks required scope for:', email, '— falling through to interactive re-auth');
-        } else {
+      if (!await this.hasRequiredScope(silentTokenData)) {
+        console.warn('[AccountManager] Silent auth token lacks required scope for:', email, '— falling through to interactive re-auth');
+      } else {
+        // Verify this is the same account.
+        const silentEmail = await this.resolveEmail(silentTokenData.accessToken);
+        if (silentEmail === email) {
           // Update stored token
           const accounts = await this.getAllAccounts();
           accounts[email] = {
@@ -295,22 +324,28 @@ export class AccountManager {
       }
     }
 
+    // Another caller may have completed an interactive auth while this one was
+    // failing the silent paths — re-check storage before opening a new window.
+    const refreshedAccount = await this.getAccount(email);
+    if (refreshedAccount && refreshedAccount.accessTokenExpires > Date.now() + 60000) {
+      return refreshedAccount.accessToken;
+    }
+
     // Try interactive re-authentication as last resort
     console.log('[AccountManager] Attempting interactive re-authentication for:', email);
-    const interactiveTokenData = await performPKCEAuth(
-      this.oauthConfig,
-      (details) => this.identity.launchWebAuthFlow(details)
-    );
+    const interactiveTokenData = await this.runInteractiveAuth();
 
     if (interactiveTokenData) {
-      // Verify this is the same account
-      const newEmail = await getUserEmail(interactiveTokenData.accessToken);
+      if (!await this.hasRequiredScope(interactiveTokenData)) {
+        console.error('[AccountManager] Interactive re-auth token lacks required scope for:', email);
+        return null;
+      }
+
+      // Verify this is the same account. A failed email lookup must not
+      // discard a successful grant — assume the account we asked to re-auth.
+      const newEmail = await this.resolveEmail(interactiveTokenData.accessToken) ?? email;
 
       if (newEmail === email) {
-        if (!await this.hasRequiredScope(interactiveTokenData)) {
-          console.error('[AccountManager] Interactive re-auth token lacks required scope for:', email);
-          return null;
-        }
         // Same account - update stored token
         const accounts = await this.getAllAccounts();
         accounts[email] = {
@@ -325,13 +360,9 @@ export class AccountManager {
 
         console.log('[AccountManager] Interactive re-auth succeeded for:', email);
         return interactiveTokenData.accessToken;
-      } else if (newEmail) {
+      } else {
         // Different account selected - add it as new account
         console.log('[AccountManager] User selected different account:', newEmail, 'instead of:', email);
-        if (!await this.hasRequiredScope(interactiveTokenData)) {
-          console.error('[AccountManager] Interactive re-auth token lacks required scope for new account:', newEmail);
-          return null;
-        }
         const accounts = await this.getAllAccounts();
         const now = Date.now();
 
@@ -424,8 +455,12 @@ export class AccountManager {
     let email: string | null = null;
 
     // If token isn't expired, try to get email
-    if (legacyExpires && legacyExpires > Date.now()) {
-      email = await getUserEmail(legacyToken);
+    if (
+      legacyExpires &&
+      legacyExpires > Date.now() &&
+      await this.hasRequiredScope({ accessToken: legacyToken })
+    ) {
+      email = await this.resolveEmail(legacyToken);
     }
 
     // If we couldn't get email and have refresh token, try refreshing first
@@ -435,8 +470,8 @@ export class AccountManager {
         this.oauthConfig.clientId,
         this.oauthConfig.clientSecret
       );
-      if (newTokenData) {
-        email = await getUserEmail(newTokenData.accessToken);
+      if (newTokenData && await this.hasRequiredScope(newTokenData)) {
+        email = await this.resolveEmail(newTokenData.accessToken);
         if (email) {
           // Use the refreshed token
           const now = Date.now();
@@ -526,7 +561,7 @@ export class AccountManager {
    * Falls back to the tokeninfo API if scope data is missing.
    * Returns false when scope cannot be determined (safe default).
    */
-  private async hasRequiredScope(tokenData: TokenData): Promise<boolean> {
+  private async hasRequiredScope(tokenData: Pick<TokenData, 'accessToken' | 'grantedScopes'>): Promise<boolean> {
     let scopes = tokenData.grantedScopes;
 
     if (!scopes) {

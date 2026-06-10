@@ -7,7 +7,9 @@ import { generateCodeVerifier, generateCodeChallenge, exchangeCodeForTokens, ref
 export { generateCodeVerifier, generateCodeChallenge, exchangeCodeForTokens, refreshAccessToken };
 
 export const REQUIRED_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
-export const GMAIL_SCOPE = `${REQUIRED_SCOPE} https://www.googleapis.com/auth/userinfo.email`;
+// Keep the request all-or-nothing. The account email is read from Gmail's
+// profile endpoint after this scope is granted.
+export const GMAIL_SCOPE = REQUIRED_SCOPE;
 
 export interface OAuthConfig {
   clientId: string;
@@ -42,6 +44,25 @@ export async function getTokenScopes(accessToken: string): Promise<string | null
     }
     const data = await response.json();
     return data.scope || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Retrieve the account email for an access token via Google's tokeninfo endpoint.
+ * Fallback for when the userinfo endpoint fails right after an auth flow.
+ */
+export async function getTokenEmail(accessToken: string): Promise<string | null> {
+  try {
+    const response = await fetch(
+      `https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(accessToken)}`
+    );
+    if (!response.ok) {
+      return null;
+    }
+    const data = await response.json();
+    return data.email || null;
   } catch {
     return null;
   }
@@ -231,6 +252,31 @@ export async function getUserEmail(accessToken: string): Promise<string | null> 
     return data.email || null;
   } catch (error) {
     console.error('[OAuth] Error fetching user email:', error);
+    return null;
+  }
+}
+
+/**
+ * Fetch the Gmail account email using the same Gmail scope the app already
+ * needs to read OTP messages.
+ */
+export async function getGmailProfileEmail(accessToken: string): Promise<string | null> {
+  try {
+    const response = await fetch('https://www.googleapis.com/gmail/v1/users/me/profile', {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+
+    if (!response.ok) {
+      console.error('[OAuth] Failed to fetch Gmail profile:', response.status);
+      return null;
+    }
+
+    const data = await response.json();
+    return data.emailAddress || null;
+  } catch (error) {
+    console.error('[OAuth] Error fetching Gmail profile:', error);
     return null;
   }
 }
