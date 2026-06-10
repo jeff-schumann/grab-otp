@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Grab OTP",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Automatically retrieve OTP codes from Gmail based on the active website's domain",
   
   "permissions": [

@@ -63,6 +63,17 @@ export default defineConfig(({ mode }) => {
     plugins: [
       {
         name: 'copy-extension-files',
+        generateBundle(_options, bundle) {
+          for (const fileName of ['otp-bridge.js', 'otp-bridge-firefox.js']) {
+            const chunk = bundle[fileName];
+            if (chunk?.type === 'chunk') {
+              // executeScript can inject the bridge repeatedly into the same
+              // isolated world. Keep generated top-level const/function names
+              // scoped so a later injection can reach the runtime guard.
+              chunk.code = `(() => {\n${chunk.code}\n})();\n`;
+            }
+          }
+        },
         writeBundle(options) {
           const distDir = options.dir || resolve(__dirname, 'dist');
 

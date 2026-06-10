@@ -1,125 +1,176 @@
 # Privacy Policy for Grab OTP
 
-**Last Updated**: August 15, 2025  
-**Version**: 1.0.0
+**Last Updated**: June 10, 2026
+**Version**: 1.1.0
 
 ## Overview
 
-Grab OTP is a browser extension that automatically retrieves one-time password (OTP) codes from your Gmail account based on the domain of the website you're currently visiting. This privacy policy explains what data we collect, how we use it, and how we protect your privacy.
+Grab OTP is a browser extension for Chrome-compatible browsers, Firefox, and Safari. It helps retrieve one-time password (OTP) codes from a Gmail account you connect, then copies or fills the code on the website you are using.
 
-## Data We Collect
+Grab OTP does not operate its own server, analytics service, ad network, or data broker integration. The extension runs in your browser, stores its settings locally, and only contacts the third-party services needed for the product to work: Google for Gmail/OAuth and GitHub for optional update checks.
 
-### 1. Gmail Email Content
-- **What**: We access your Gmail emails to search for OTP codes
-- **Scope**: Only emails from the past 30 minutes from senders matching your current website's domain
-- **Purpose**: To extract OTP verification codes for auto-fill functionality
-- **Examples**: If you're on "bank.com", we search emails from "@bank.com" for OTP codes
+This policy describes the data the extension handles, why it handles it, where it is stored, and the choices available to you.
 
-### 2. Current Website Domain
-- **What**: The domain of the website you're currently visiting
-- **Purpose**: To match with email senders and find relevant OTP codes
-- **Access**: Only when you manually click the extension icon (activeTab permission)
+## Data Grab OTP Handles
 
-### 3. User Preferences
-- **What**: Your auto-fill preference setting (enabled/disabled)
-- **Storage**: Stored locally in your browser only
-- **Purpose**: To remember whether you want automatic OTP filling
+### Gmail Account and Authentication Data
 
-## Data We DO NOT Collect
+When you add a Gmail account, Grab OTP uses Google OAuth to request Gmail read-only access.
 
-- ❌ Personal information (name, address, phone, etc.)
-- ❌ Complete email contents (only OTP codes are extracted)
-- ❌ Browsing history
-- ❌ Passwords or sensitive account information
-- ❌ Data from other websites or applications
+Grab OTP stores the following locally in your browser extension storage:
 
-## How We Use Your Data
+- Gmail account email address
+- OAuth access token and expiration time
+- OAuth refresh token, when Google provides one
+- Granted OAuth scopes
+- Active account selection
+- Account added and last-used timestamps
 
-1. **OTP Extraction**: Search recent emails for verification codes
-2. **Auto-Fill**: Automatically fill OTP codes into website forms (if enabled)
-3. **Clipboard Copy**: Copy OTP codes to your clipboard for manual pasting
-4. **Preference Storage**: Remember your auto-fill settings
+This data is used only to authenticate with Google, keep your Gmail connection working, and let you choose between connected accounts.
 
-## Data Storage and Security
+### Gmail Message Data
 
-### Local Storage Only
-- All data processing happens locally in your browser
-- No data is transmitted to external servers
-- OTP codes are temporarily stored locally and automatically cleared
+When you request a code, Grab OTP searches Gmail for recent messages related to the website you are using.
 
-### Security Measures
-- **OAuth 2.0**: Secure authentication with Gmail using Google's official APIs
-- **Minimal Permissions**: Only requests access to what's absolutely necessary
-- **Input Sanitization**: All data is sanitized to prevent security vulnerabilities
-- **No Logging**: Sensitive information is never logged or stored permanently
+- The extension builds a Gmail search query from the current website domain.
+- The search is limited to recent mail, currently messages newer than 30 minutes.
+- Grab OTP asks Gmail for up to 10 matching message IDs and checks up to 5 message details for an OTP.
+- Message snippets and message text returned by Gmail are processed locally in your browser to find an OTP.
+- Full email content is not stored permanently and is not sent to any server controlled by Grab OTP.
 
-### Data Retention
-- **OTP Codes**: Cleared immediately after use or when popup is closed
-- **User Preferences**: Stored until manually cleared or extension is uninstalled
-- **OAuth Tokens**: Managed securely by browser's identity system
+Grab OTP uses the Gmail API scope `https://www.googleapis.com/auth/gmail.readonly`, which allows the extension to view Gmail messages and settings. Grab OTP does not request permission to send, delete, modify, or permanently remove email.
+
+### Current Website and Auto-Fill Data
+
+When you click the extension, Grab OTP reads the active tab's website domain so it can search Gmail for messages that appear related to that site.
+
+If auto-fill is enabled, the extension may temporarily inspect the current page's form fields, field labels, field attributes, nearby text, and current input values to identify the most likely OTP field. This inspection happens locally in the browser tab. Grab OTP uses it only to decide where to place the OTP and does not send page form data to Grab OTP servers.
+
+### OTP Codes
+
+When Grab OTP finds a code, it may:
+
+- Display the code in the extension popup
+- Copy the code to your clipboard
+- Fill the code into the current web page if auto-fill is enabled
+- Temporarily store the latest result in local extension storage so the popup can recover from sign-in or browser popup interruptions
+
+Latest OTP results are designed to be short-lived. The popup normally removes them after display or after the auto-fill recovery window. If the browser closes before cleanup happens, stale results are removed the next time the extension checks them or when a new OTP request starts.
+
+### User Settings
+
+Grab OTP stores these settings locally in your browser:
+
+- Auto-fill enabled or disabled
+- Domain override rules you create
+- Cached update-check information
+- Whether a recent update notice has already been shown
+
+These settings are not sent to Grab OTP servers.
 
 ## Third-Party Services
 
-### Google Gmail API
-- **Purpose**: Access your Gmail to search for OTP codes
-- **Scope**: `gmail.readonly` - read-only access to your emails
-- **Data Shared**: None - we only receive search results, Google does not receive any data from us
-- **Privacy**: Subject to [Google's Privacy Policy](https://policies.google.com/privacy)
+### Google
 
-## Your Rights and Controls
+Grab OTP contacts Google services for:
 
-### You Can:
-- ✅ Revoke Gmail access at any time through Google Account settings
-- ✅ Disable auto-fill functionality in extension preferences
-- ✅ Uninstall the extension to remove all local data
-- ✅ Use the extension manually without storing any preferences
+- OAuth sign-in and token refresh
+- OAuth token scope validation
+- Reading the connected account email address
+- Gmail searches and message retrieval through the Gmail API
 
-### How to Revoke Access:
-1. Go to [Google Account Security](https://myaccount.google.com/security)
-2. Navigate to "Third-party apps with account access"
-3. Find "Grab OTP" and click "Remove access"
+Google receives the information required for those requests, such as OAuth tokens, Gmail API requests, Gmail search queries, message IDs requested, and normal network metadata. Google's handling of that information is governed by [Google's Privacy Policy](https://policies.google.com/privacy).
+
+Grab OTP's use of Google user data is limited to providing and improving the extension's user-facing OTP retrieval and auto-fill features. Grab OTP does not sell Google user data, use it for advertising, transfer it to data brokers, or allow humans to read Gmail data except if required for security, legal compliance, or with your explicit consent.
+
+### GitHub
+
+Grab OTP may check the latest public GitHub release for update notices. This request does not intentionally include Gmail data, OTP codes, website form data, or your extension settings. GitHub may receive normal network metadata such as IP address and user agent. GitHub's handling of that information is governed by the [GitHub General Privacy Statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement).
+
+### Safari Native Messaging
+
+On Safari, Grab OTP uses the Safari wrapper app and native messaging to complete the Google OAuth flow. This communication stays between the Safari extension and the local Safari app wrapper on your device.
+
+## What Grab OTP Does Not Do
+
+Grab OTP does not:
+
+- Sell personal data
+- Use data for advertising, retargeting, or profiling
+- Use analytics or behavioral tracking
+- Send Gmail content, OTP codes, browsing history, or form data to a Grab OTP server
+- Share Gmail data with data brokers or advertising platforms
+- Modify, send, delete, archive, or label Gmail messages
+- Intentionally collect passwords, payment card numbers, government IDs, health data, or precise location
+
+## Local Storage and Retention
+
+Grab OTP uses browser extension storage on your device.
+
+- Gmail account tokens and account email addresses remain until you remove the account, clear extension data, or uninstall the extension.
+- User settings and domain overrides remain until you change them, clear extension data, or uninstall the extension.
+- OTP results are temporary and intended only for short popup recovery windows.
+- Update-check results are cached locally to avoid repeated GitHub requests.
+
+Uninstalling the extension removes extension-local data from the browser. Removing an account from Grab OTP removes the local account data from the extension, but you should also revoke access in your Google Account if you want Google to invalidate the authorization.
+
+## Security
+
+Grab OTP uses:
+
+- Google OAuth 2.0 and PKCE-based authentication flows
+- HTTPS requests to Google and GitHub
+- Read-only Gmail access
+- Local browser extension storage for settings and tokens
+- Minimal browser permissions for the extension's stated features
+
+No system can guarantee absolute security. Keep your browser, operating system, and extension version up to date.
 
 ## Browser Permissions Explained
 
-- **activeTab**: Access current website domain only when you click the extension
-- **tabs**: Detect the domain of your current website
-- **storage**: Store your auto-fill preference locally
-- **identity**: Authenticate with Gmail using OAuth 2.0
-- **https://www.googleapis.com/***: Communicate with Gmail API
+Grab OTP requests permissions for the following purposes:
+
+- **activeTab**: Read the current website and run the auto-fill helper only after you interact with the extension.
+- **tabs**: Identify the active tab and its domain.
+- **storage**: Store account connection data, settings, temporary OTP results, and update-check cache locally.
+- **identity**: Start browser-supported OAuth sign-in flows.
+- **scripting**: Inject the OTP auto-fill helper into the current page when needed.
+- **alarms**: Refresh OAuth tokens and schedule non-critical background work.
+- **clipboardWrite**: Copy OTP codes to your clipboard.
+- **nativeMessaging**: Complete Safari OAuth through the local Safari wrapper app.
+- **Google host permissions**: Communicate with Google OAuth and Gmail API endpoints.
+- **Optional website permissions on Firefox**: Support user-initiated auto-fill or clipboard helper injection on the current site.
+
+## Your Choices and Controls
+
+You can:
+
+- Disable auto-fill in the extension popup.
+- Remove a Gmail account from Grab OTP.
+- Revoke Grab OTP's Google access from your Google Account.
+- Clear or replace the copied OTP in your clipboard after use.
+- Clear extension data in your browser.
+- Uninstall the extension.
+
+To revoke Google access:
+
+1. Go to [Google Account Security](https://myaccount.google.com/security).
+2. Open "Your connections to third-party apps & services" or the current Google account access section.
+3. Find Grab OTP.
+4. Remove access.
+
+Depending on your location, you may have additional privacy rights. Because Grab OTP does not run user accounts or a developer-controlled data server, most access, deletion, and correction controls are handled locally in your browser or through your Google Account.
 
 ## Children's Privacy
 
-This extension is not intended for use by children under 13. We do not knowingly collect personal information from children under 13. If you are a parent or guardian and believe your child has used this extension, please contact us.
+Grab OTP is not intended for children under 13. We do not knowingly collect personal information from children under 13.
 
 ## Changes to This Policy
 
-We may update this privacy policy from time to time. When we do:
-- We'll update the "Last Updated" date
-- Significant changes will be communicated through the extension update process
-- Continued use of the extension after changes constitutes acceptance of the new policy
+We may update this privacy policy as the extension, browser store requirements, or third-party service requirements change. When we update it, we will change the "Last Updated" date above. Significant product data-use changes should be reflected in the extension, store listing, or release notes before the changed behavior is used.
 
-## Contact Information
+## Contact
 
-If you have questions about this privacy policy or our privacy practices:
+If you have questions about this policy or Grab OTP's privacy practices, open an issue in the project repository:
 
-- **GitHub Issues**: [https://github.com/anthropics/claude-code/issues](https://github.com/anthropics/claude-code/issues)
-- **Extension Version**: Check "About" section in extension popup
-
-## Compliance
-
-This extension is designed to comply with:
-- General Data Protection Regulation (GDPR)
-- California Consumer Privacy Act (CCPA)
-- Browser extension store policies (Chrome Web Store, Firefox Add-ons)
-
-## Summary
-
-Grab OTP is designed with privacy by default:
-- ✅ Local processing only
-- ✅ No external data transmission
-- ✅ Minimal data collection
-- ✅ User-controlled access
-- ✅ Secure authentication
-- ✅ Transparent operations
-
-Your privacy is our priority. We only access what's necessary to provide the OTP retrieval functionality you requested.
+[https://github.com/jefe-johann/grab-otp/issues](https://github.com/jefe-johann/grab-otp/issues)

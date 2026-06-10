@@ -72,7 +72,7 @@ Safari's OAuth redirect URI is derived from the client ID as `com.googleusercont
 - **Local Processing**: All OTP extraction happens in your browser
 - **Minimal Permissions**: Only accesses what's necessary
 - **OAuth 2.0**: Secure Gmail authentication via Google
-- **No Data Collection**: Extension doesn't collect or transmit personal data
+- **No Tracking or Ads**: No analytics, profiling, advertising, or developer-run backend
 
 See [Privacy Policy](PRIVACY_POLICY.md) for full details.
 
