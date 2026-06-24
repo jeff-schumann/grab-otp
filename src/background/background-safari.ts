@@ -8,6 +8,7 @@ import { checkForUpdates } from '../shared/version-check';
 import { getGmailMessageTextContent } from './gmail-message-text';
 import { extractOtpFromText } from './otp-extractor';
 import { buildSenderQuery } from './gmail-query';
+import { fetchSmsOtpWithToken } from './sms-otp';
 
 declare const __SAFARI_CLIENT_ID__: string;
 declare const __SAFARI_APP_BUNDLE_ID__: string;
@@ -55,6 +56,7 @@ interface ExtensionMessage {
   action?: string;
   email?: string;
   domain?: string;
+  source?: 'gmail' | 'sms';
 }
 
 interface SafariAlarm {
@@ -478,6 +480,27 @@ class SafariGmailOTPFetcher {
     }
   }
 
+  // Domain-agnostic fetch for codes forwarded from SMS by the phone relay.
+  public async fetchSmsOTP(): Promise<OTPResponse> {
+    try {
+      const tokenInfo = await this.accountStore.getActiveAccountToken();
+      if (!tokenInfo) {
+        const hasAccounts = await this.accountStore.hasAccounts();
+        return {
+          success: false,
+          error: hasAccounts
+            ? 'Gmail authentication expired. Please re-authenticate.'
+            : 'No Gmail account configured. Click extension icon to add an account.'
+        };
+      }
+
+      return await fetchSmsOtpWithToken(tokenInfo.token, tokenInfo.email);
+    } catch (error) {
+      console.error('[Safari Background] Error fetching SMS OTP:', error);
+      return { success: false, error: (error as Error).message };
+    }
+  }
+
   private async searchGmailMessages(token: string, userEmail: string, domain: string): Promise<GmailMessage[]> {
     const query = `${buildSenderQuery(domain)} newer_than:30m`;
     const url = `https://www.googleapis.com/gmail/v1/users/${encodeURIComponent(userEmail)}/messages?q=${encodeURIComponent(query)}&maxResults=10`;
@@ -557,6 +580,9 @@ browser.runtime.onMessage.addListener(async (message) => {
   }
 
   if (message.action === 'fetchOTP') {
+    if (message.source === 'sms') {
+      return otpFetcher.fetchSmsOTP();
+    }
     if (!message.domain) {
       return { success: false, error: 'Missing request domain.' };
     }

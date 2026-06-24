@@ -5,6 +5,7 @@ import type { OtpFillResult } from '../content/otp-finder';
 import { getGmailMessageTextContent } from './gmail-message-text';
 import { extractOtpFromText } from './otp-extractor';
 import { buildSenderQuery } from './gmail-query';
+import { fetchSmsOtpWithToken } from './sms-otp';
 
 declare const __CHROME_CLIENT_ID__: string;
 declare const __CHROME_CLIENT_SECRET__: string;
@@ -55,6 +56,8 @@ interface GmailMessageResponse {
   snippet?: string;
 }
 
+type OtpSource = 'gmail' | 'sms';
+
 interface OtpRequestContext {
   requestId: string;
   tabId?: number;
@@ -62,6 +65,7 @@ interface OtpRequestContext {
   websiteDomain: string;
   searchDomain: string;
   autoFill: boolean;
+  source: OtpSource;
 }
 
 interface LatestOtpResult {
@@ -96,6 +100,7 @@ interface FetchOtpMessage {
   tabId?: number;
   frameIds?: number[];
   requestId?: string;
+  source?: OtpSource;
 }
 
 const LATEST_RESULT_KEY = 'latest_otp_result';
@@ -177,6 +182,27 @@ class GmailOTPFetcher {
     }
   }
 
+  // Domain-agnostic fetch for codes forwarded from SMS by the phone relay.
+  public async fetchSmsOTP(): Promise<OTPResponse> {
+    try {
+      const tokenInfo = await accountManager.getActiveAccountToken();
+      if (!tokenInfo) {
+        const hasAccounts = await accountManager.hasAccounts();
+        return {
+          success: false,
+          error: hasAccounts
+            ? 'Gmail authentication expired. Please re-authenticate.'
+            : 'No Gmail account configured. Click extension icon to add an account.'
+        };
+      }
+
+      return await fetchSmsOtpWithToken(tokenInfo.token, tokenInfo.email);
+    } catch (error) {
+      console.error('[Chrome Background] Error fetching SMS OTP:', error);
+      return { success: false, error: (error as Error).message };
+    }
+  }
+
   private async searchGmailMessages(token: string, userEmail: string, domain: string): Promise<GmailMessage[]> {
     const query = `${buildSenderQuery(domain)} newer_than:30m`;
     const url = `https://www.googleapis.com/gmail/v1/users/${encodeURIComponent(userEmail)}/messages?q=${encodeURIComponent(query)}&maxResults=10`;
@@ -236,7 +262,8 @@ function createRequestContext(message: FetchOtpMessage): OtpRequestContext {
     frameIds: Array.from(new Set(message.frameIds || [])).filter(frameId => frameId >= 0),
     websiteDomain: message.websiteDomain || message.domain,
     searchDomain: message.domain,
-    autoFill: Boolean(message.autoFill && message.tabId)
+    autoFill: Boolean(message.autoFill && message.tabId),
+    source: message.source === 'sms' ? 'sms' : 'gmail'
   };
 }
 
@@ -303,7 +330,9 @@ async function processOTPRequest(request: OtpRequestContext): Promise<LatestOtpR
   await setInFlight(request);
 
   try {
-    const result = await otpFetcher.fetchOTPForDomain(request.searchDomain);
+    const result = request.source === 'sms'
+      ? await otpFetcher.fetchSmsOTP()
+      : await otpFetcher.fetchOTPForDomain(request.searchDomain);
     const activeEmail = await accountManager.getActiveAccountEmail();
     const resultContext = {
       websiteDomain: request.websiteDomain,

@@ -10,6 +10,7 @@ interface OTPRequest {
   autoFill?: boolean;
   tabId?: number;
   timestamp: number;
+  source?: 'gmail' | 'sms';
 }
 
 interface OtpFillResult {
@@ -47,6 +48,7 @@ interface AccountsResponse {
 class FirefoxPopupController {
   private statusElement: HTMLElement;
   private grabButton: HTMLButtonElement;
+  private smsButton: HTMLButtonElement;
   private domainElement: HTMLElement;
   private autoFillCheckbox: HTMLInputElement;
   private updateBanner: HTMLElement;
@@ -71,6 +73,7 @@ class FirefoxPopupController {
   constructor() {
     this.statusElement = document.getElementById('status')!;
     this.grabButton = document.getElementById('grabOTP') as HTMLButtonElement;
+    this.smsButton = document.getElementById('grabSMS') as HTMLButtonElement;
     this.domainElement = document.getElementById('currentDomain')!;
     this.autoFillCheckbox = document.getElementById('autoFillEnabled') as HTMLInputElement;
     this.updateBanner = document.getElementById('updateBanner')!;
@@ -100,6 +103,7 @@ class FirefoxPopupController {
     await this.displayCurrentDomain();
     await this.loadAutoFillPreference();
     this.grabButton.addEventListener('click', () => this.handleGrabOTP());
+    this.smsButton.addEventListener('click', () => this.handleGrabSmsOTP());
     this.autoFillCheckbox.addEventListener('change', () => this.saveAutoFillPreference());
 
     // Domain override settings
@@ -371,6 +375,61 @@ class FirefoxPopupController {
     }
   }
 
+  // Grab a code forwarded from SMS (subject-tagged in Gmail by the phone relay),
+  // bypassing domain matching. Otherwise mirrors handleGrabOTP.
+  private async handleGrabSmsOTP() {
+    await browser.storage.local.remove('latest_otp_result');
+
+    const accountsResponse = await browser.runtime.sendMessage({ action: 'getAccounts' }) as AccountsResponse;
+    if (Object.keys(accountsResponse.accounts).length === 0) {
+      this.showStatus('Please add a Gmail account first', 'error');
+      return;
+    }
+
+    this.setLoading(true, 'sms');
+    this.showStatus('Looking for a forwarded SMS code...', 'loading');
+
+    try {
+      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) {
+        throw new Error('Unable to get current tab ID');
+      }
+
+      const websiteDomain = tab.url ? new URL(tab.url).hostname : '';
+
+      if (this.autoFillCheckbox.checked) {
+        try {
+          const injectionResult = await browser.runtime.sendMessage({
+            action: 'injectBridge',
+            tabId: tab.id
+          });
+          if (!injectionResult.success) {
+            throw new Error(injectionResult.error || 'Bridge injection failed');
+          }
+          await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (error) {
+          console.log('[Firefox Popup] Bridge injection skipped:', (error as Error).message);
+        }
+      }
+
+      browser.runtime.sendMessage({
+        action: 'fetchOTP',
+        source: 'sms',
+        domain: websiteDomain,
+        autoFill: this.autoFillCheckbox.checked,
+        tabId: tab.id,
+        timestamp: Date.now()
+      } as OTPRequest);
+
+      this.startResultPolling();
+    } catch (error) {
+      console.error('Error sending SMS OTP request:', error);
+      this.showStatus('Error: ' + (error as Error).message, 'error');
+      this.setLoading(false);
+      this.stopResultPolling();
+    }
+  }
+
   // Called both as a fresh-open restore (isRestore=true, from init) and as the
   // active poll while a grab is in flight (isRestore=false, from polling).
   private async checkForRecentResults(isRestore: boolean = false) {
@@ -499,13 +558,11 @@ class FirefoxPopupController {
     this.statusElement.style.display = 'block';
   }
 
-  private setLoading(isLoading: boolean) {
+  private setLoading(isLoading: boolean, active: 'gmail' | 'sms' = 'gmail') {
     this.grabButton.disabled = isLoading;
-    if (isLoading) {
-      this.grabButton.textContent = 'Searching...';
-    } else {
-      this.grabButton.textContent = 'Get OTP from Gmail';
-    }
+    this.smsButton.disabled = isLoading;
+    this.grabButton.textContent = isLoading && active === 'gmail' ? 'Searching...' : 'Get OTP from Gmail';
+    this.smsButton.textContent = isLoading && active === 'sms' ? 'Searching...' : 'Grab SMS code';
   }
 
   // Domain override methods

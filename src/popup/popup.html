@@ -65,6 +65,15 @@
       background: #ccc;
       cursor: not-allowed;
     }
+
+    .grab-button-secondary {
+      margin-top: 8px;
+      background: #00897b;
+    }
+
+    .grab-button-secondary:hover {
+      background: #00796b;
+    }
     
     .domain-row {
       display: flex;
@@ -385,6 +394,10 @@
   
   <button id="grabOTP" class="grab-button">
     Get OTP from Gmail
+  </button>
+
+  <button id="grabSMS" class="grab-button grab-button-secondary">
+    Grab SMS code
   </button>
   
   <div class="domain-row">

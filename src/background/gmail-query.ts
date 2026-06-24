@@ -65,6 +65,32 @@ function getBrandToken(hostname: string): string {
  * base-domain term already covers any subdomain sender and the brand term
  * catches display-name-only or look-alike sending domains.
  */
+// --- Forwarded-SMS OTP support -------------------------------------------
+// SMS OTPs reach Gmail via a phone automation (MacroDroid → Apps Script relay)
+// that stamps every forwarded text with a fixed subject. These codes aren't
+// tied to the active website's domain, so they use their own subject-only
+// query instead of buildSenderQuery.
+
+/** Subject tag the relay puts on every forwarded SMS. Must match the script. */
+export const SMS_SUBJECT_TAG = 'GRABOTP-SMS';
+
+/**
+ * Max age of a forwarded SMS that we'll still treat as the current code.
+ * Gmail's `newer_than:` has no sub-day granularity, so the real freshness check
+ * runs in code against each message's internalDate; this is that threshold.
+ */
+export const SMS_MAX_AGE_MS = 10 * 60 * 1000;
+
+/**
+ * Gmail search for forwarded-SMS OTP emails. The subject is quoted so Gmail
+ * treats the hyphen as part of the phrase rather than a "minus" exclude
+ * operator. `newer_than:1d` bounds the scan cheaply; precise freshness is
+ * enforced separately against internalDate.
+ */
+export function buildSmsQuery(): string {
+  return `subject:"${SMS_SUBJECT_TAG}" newer_than:1d`;
+}
+
 export function buildSenderQuery(hostname: string): string {
   const host = normalizeHostname(hostname);
 

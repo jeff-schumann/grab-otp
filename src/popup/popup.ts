@@ -73,6 +73,7 @@ const AUTO_FILLED_RESULT_TTL_MS = 5 * 1000;
 class PopupController {
   private statusElement: HTMLElement;
   private grabButton: HTMLButtonElement;
+  private smsButton: HTMLButtonElement;
   private domainElement: HTMLElement;
   private autoFillCheckbox: HTMLInputElement;
   private updateBanner: HTMLElement;
@@ -95,6 +96,7 @@ class PopupController {
   constructor() {
     this.statusElement = document.getElementById('status')!;
     this.grabButton = document.getElementById('grabOTP') as HTMLButtonElement;
+    this.smsButton = document.getElementById('grabSMS') as HTMLButtonElement;
     this.domainElement = document.getElementById('currentDomain')!;
     this.autoFillCheckbox = document.getElementById('autoFillEnabled') as HTMLInputElement;
     this.updateBanner = document.getElementById('updateBanner')!;
@@ -130,6 +132,7 @@ class PopupController {
     await this.loadAutoFillPreference();
 
     this.grabButton.addEventListener('click', () => this.handleGrabOTP());
+    this.smsButton.addEventListener('click', () => this.handleGrabSmsOTP());
     this.autoFillCheckbox.addEventListener('change', () => this.saveAutoFillPreference());
     this.settingsToggle.addEventListener('click', () => this.toggleOverridePanel());
     this.overrideInput.addEventListener('blur', () => this.handleOverrideChange());
@@ -362,6 +365,59 @@ class PopupController {
     }
   }
 
+  // Grab a code forwarded from SMS (subject-tagged in Gmail by the phone relay),
+  // bypassing domain matching. Otherwise mirrors handleGrabOTP: same bridge
+  // injection, auto-fill, and result rendering.
+  private async handleGrabSmsOTP(): Promise<void> {
+    try {
+      await extensionApi.storage.local.remove(LATEST_RESULT_KEY);
+
+      const accounts = await extensionApi.runtime.sendMessage({ action: 'getAccounts' }) as AccountsResponse;
+      if (Object.keys(accounts.accounts).length === 0) {
+        this.showStatus('Please add a Gmail account first', 'error');
+        return;
+      }
+
+      this.setLoading(true, 'sms');
+      this.showStatus('Looking for a forwarded SMS code...', 'loading');
+
+      const tab = await this.getActiveTab();
+      if (!tab.id) throw new Error('Unable to access active tab');
+
+      const tabUrl = tab.url || tab.pendingUrl;
+      const websiteDomain = tabUrl ? new URL(tabUrl).hostname : '';
+      const requestId = this.generateRequestId();
+      let frameIds: number[] = [];
+
+      if (this.autoFillCheckbox.checked) {
+        frameIds = await this.injectBridge(tab.id);
+      }
+
+      const response = await extensionApi.runtime.sendMessage({
+        action: 'fetchOTP',
+        source: 'sms',
+        domain: websiteDomain,
+        websiteDomain,
+        autoFill: this.autoFillCheckbox.checked,
+        tabId: tab.id,
+        frameIds,
+        requestId
+      }) as FetchOtpStartResponse;
+
+      if (!response.success) {
+        this.showStatus(response.error || 'Unable to start SMS code request', 'error');
+        this.setLoading(false);
+        return;
+      }
+
+      if (response.result) await this.renderResult(response.result);
+    } catch (error) {
+      console.error('Error handling SMS OTP request:', error);
+      this.showStatus(`Error: ${(error as Error).message}`, 'error');
+      this.setLoading(false);
+    }
+  }
+
   private async getActiveTab(): Promise<chrome.tabs.Tab> {
     const [tab] = await extensionApi.tabs.query({ active: true, currentWindow: true });
     if (!tab) throw new Error('No active tab found');
@@ -553,9 +609,11 @@ class PopupController {
     this.statusElement.style.display = 'block';
   }
 
-  private setLoading(isLoading: boolean): void {
+  private setLoading(isLoading: boolean, active: 'gmail' | 'sms' = 'gmail'): void {
     this.grabButton.disabled = isLoading;
-    this.grabButton.textContent = isLoading ? 'Searching...' : 'Get OTP from Gmail';
+    this.smsButton.disabled = isLoading;
+    this.grabButton.textContent = isLoading && active === 'gmail' ? 'Searching...' : 'Get OTP from Gmail';
+    this.smsButton.textContent = isLoading && active === 'sms' ? 'Searching...' : 'Grab SMS code';
   }
 
   private async getOverride(websiteDomain: string): Promise<string | null> {

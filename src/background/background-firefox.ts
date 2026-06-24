@@ -5,6 +5,7 @@ import { type OtpFillResult } from '../content/otp-finder';
 import { getGmailMessageTextContent } from './gmail-message-text';
 import { extractOtpFromText } from './otp-extractor';
 import { buildSenderQuery } from './gmail-query';
+import { fetchSmsOtpWithToken } from './sms-otp';
 
 declare const browser: any;
 declare const __FIREFOX_CLIENT_ID__: string;
@@ -47,11 +48,13 @@ const accountManager = new AccountManager(
 
 class FirefoxGmailOTPFetcher {
   // Fire-and-forget OTP fetch with full background processing
-  async processOTPRequest(domain: string, requestTimestamp: number, autoFill: boolean = false, tabId?: number): Promise<void> {
-    console.log(`Starting OTP fetch for domain: ${domain}, autoFill: ${autoFill}`);
+  async processOTPRequest(domain: string, requestTimestamp: number, autoFill: boolean = false, tabId?: number, source: 'gmail' | 'sms' = 'gmail'): Promise<void> {
+    console.log(`Starting OTP fetch for domain: ${domain}, autoFill: ${autoFill}, source: ${source}`);
 
     try {
-      const result = await this.fetchOTPForDomain(domain);
+      const result = source === 'sms'
+        ? await this.fetchSmsOTP()
+        : await this.fetchOTPForDomain(domain);
 
       if (result.success && result.otp) {
         if (autoFill && tabId) {
@@ -166,6 +169,30 @@ class FirefoxGmailOTPFetcher {
         return { success: false, error: 'Authentication expired - please try again' };
       }
 
+      return { success: false, error: (error as Error).message };
+    }
+  }
+
+  // Domain-agnostic fetch for codes forwarded from SMS by the phone relay.
+  private async fetchSmsOTP(): Promise<OTPResponse> {
+    try {
+      const tokenInfo = await accountManager.getActiveAccountToken();
+      if (!tokenInfo) {
+        const hasAccounts = await accountManager.hasAccounts();
+        return {
+          success: false,
+          error: hasAccounts
+            ? 'Gmail authentication expired. Please re-authenticate.'
+            : 'No Gmail account configured. Click extension icon to add an account.'
+        };
+      }
+
+      return await fetchSmsOtpWithToken(tokenInfo.token, tokenInfo.email);
+    } catch (error) {
+      console.error('Error fetching SMS OTP:', error);
+      if (error instanceof Error && error.message.includes('401')) {
+        return { success: false, error: 'Authentication expired - please try again' };
+      }
       return { success: false, error: (error as Error).message };
     }
   }
@@ -365,7 +392,7 @@ browser.runtime.onMessage.addListener(async (message: any, _sender: any, _sendRe
 
   if (message.action === 'fetchOTP') {
     // Process in background without blocking the message response
-    firefoxOtpFetcher.processOTPRequest(message.domain, message.timestamp, message.autoFill || false, message.tabId);
+    firefoxOtpFetcher.processOTPRequest(message.domain, message.timestamp, message.autoFill || false, message.tabId, message.source === 'sms' ? 'sms' : 'gmail');
     // Return immediately (no response needed)
     return;
   }
