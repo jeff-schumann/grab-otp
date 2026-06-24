@@ -102,6 +102,12 @@ export default defineConfig(({ mode }) => {
 
           copyFileSync(popupHtmlSrc, resolve(distDir, 'popup.html'));
 
+          // Copy shared popup stylesheet (referenced by both popup variants)
+          copyFileSync(
+            resolve(__dirname, 'src/popup/popup.css'),
+            resolve(distDir, 'popup.css')
+          );
+
           // Create icons directory and copy icons
           const iconsDir = resolve(distDir, 'icons');
           if (!existsSync(iconsDir)) {
