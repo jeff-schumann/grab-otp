@@ -5,6 +5,7 @@ A cross-browser WebExtension that automatically retrieves OTP codes from Gmail b
 ## Features
 
 - 🔐 **Auto OTP Detection** - Finds verification codes in Gmail emails matching your current website
+- ☎️ **SMS Support** - Relay SMS codes to gmail, Grab-OTP will detect them. See setup instructions in /guides
 - 📋 **Clipboard Copy** - Automatically copies OTP codes to clipboard  
 - ⚡ **Auto-Fill** - Fills OTP codes directly into website forms where supported
 - 🛡️ **Security First** - Minimal permissions, OAuth 2.0, no sensitive data logging
@@ -62,10 +63,6 @@ npm run package:safari # For Safari
 
 Safari's OAuth redirect URI is derived from the client ID as `com.googleusercontent.apps.<client-id-prefix>:/oauth2redirect`.
 
-### From GitHub Releases
-1. Download the latest release from [Releases](https://github.com/jefe-johann/grab-otp/releases)
-2. Unzip the extension files
-3. Follow the browser-specific loading instructions above
 
 ## Privacy & Security
 

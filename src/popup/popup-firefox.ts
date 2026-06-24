@@ -51,6 +51,7 @@ class FirefoxPopupController {
   private smsButton: HTMLButtonElement;
   private domainElement: HTMLElement;
   private autoFillCheckbox: HTMLInputElement;
+  private smsCheckbox: HTMLInputElement;
   private updateBanner: HTMLElement;
   private updateMessage: HTMLElement;
   private resultPollingInterval: number | null = null;
@@ -76,6 +77,7 @@ class FirefoxPopupController {
     this.smsButton = document.getElementById('grabSMS') as HTMLButtonElement;
     this.domainElement = document.getElementById('currentDomain')!;
     this.autoFillCheckbox = document.getElementById('autoFillEnabled') as HTMLInputElement;
+    this.smsCheckbox = document.getElementById('smsEnabled') as HTMLInputElement;
     this.updateBanner = document.getElementById('updateBanner')!;
     this.updateMessage = document.getElementById('updateMessage')!;
     this.settingsToggle = document.getElementById('settingsToggle') as HTMLButtonElement;
@@ -102,9 +104,11 @@ class FirefoxPopupController {
     await this.checkForUpdates();
     await this.displayCurrentDomain();
     await this.loadAutoFillPreference();
+    await this.loadSmsPreference();
     this.grabButton.addEventListener('click', () => this.handleGrabOTP());
     this.smsButton.addEventListener('click', () => this.handleGrabSmsOTP());
     this.autoFillCheckbox.addEventListener('change', () => this.saveAutoFillPreference());
+    this.smsCheckbox.addEventListener('change', () => this.saveSmsPreference());
 
     // Domain override settings
     this.settingsToggle.addEventListener('click', () => this.toggleOverridePanel());
@@ -302,6 +306,30 @@ class FirefoxPopupController {
       await browser.storage.local.set({ autoFillEnabled: this.autoFillCheckbox.checked });
     } catch (error) {
       console.error('Error saving auto-fill preference:', error);
+    }
+  }
+
+  // SMS grabbing is an opt-in feature (requires the external phone->Gmail relay),
+  // so the secondary button stays hidden until the user enables it here.
+  private async loadSmsPreference() {
+    try {
+      const result = await browser.storage.local.get(['smsEnabled']);
+      const enabled = result.smsEnabled ?? false; // Default to off (opt-in)
+      this.smsCheckbox.checked = enabled;
+      this.smsButton.style.display = enabled ? '' : 'none';
+    } catch (error) {
+      console.error('Error loading SMS preference:', error);
+      this.smsCheckbox.checked = false;
+      this.smsButton.style.display = 'none';
+    }
+  }
+
+  private async saveSmsPreference() {
+    try {
+      await browser.storage.local.set({ smsEnabled: this.smsCheckbox.checked });
+      this.smsButton.style.display = this.smsCheckbox.checked ? '' : 'none';
+    } catch (error) {
+      console.error('Error saving SMS preference:', error);
     }
   }
 

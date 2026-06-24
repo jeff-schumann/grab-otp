@@ -514,7 +514,7 @@ async function initialize(): Promise<void> {
   await scheduleTokenRefresh();
 
   const manifest = chrome.runtime.getManifest();
-  await checkForUpdates(manifest.version);
+  void checkForUpdates(manifest.version);
 }
 
 chrome.runtime.onInstalled.addListener(async () => {

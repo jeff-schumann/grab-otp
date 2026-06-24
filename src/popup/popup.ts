@@ -76,6 +76,7 @@ class PopupController {
   private smsButton: HTMLButtonElement;
   private domainElement: HTMLElement;
   private autoFillCheckbox: HTMLInputElement;
+  private smsCheckbox: HTMLInputElement;
   private updateBanner: HTMLElement;
   private updateMessage: HTMLElement;
   private settingsToggle: HTMLButtonElement;
@@ -99,6 +100,7 @@ class PopupController {
     this.smsButton = document.getElementById('grabSMS') as HTMLButtonElement;
     this.domainElement = document.getElementById('currentDomain')!;
     this.autoFillCheckbox = document.getElementById('autoFillEnabled') as HTMLInputElement;
+    this.smsCheckbox = document.getElementById('smsEnabled') as HTMLInputElement;
     this.updateBanner = document.getElementById('updateBanner')!;
     this.updateMessage = document.getElementById('updateMessage')!;
     this.settingsToggle = document.getElementById('settingsToggle') as HTMLButtonElement;
@@ -115,7 +117,7 @@ class PopupController {
     this.init();
   }
 
-  private async init(): Promise<void> {
+  private init(): void {
     // React the moment the background stores a result. This is what lets a
     // request interrupted by re-auth (which closed the popup) finish on its own
     // when the popup is reopened, instead of needing a second click.
@@ -125,15 +127,15 @@ class PopupController {
       if (updated) void this.renderResult(updated);
     });
 
-    await this.loadAccounts();
-    await this.restoreRequestState();
-    await this.checkForUpdates();
-    await this.displayCurrentDomain();
-    await this.loadAutoFillPreference();
+    this.bindEventHandlers();
+    void this.loadInitialState();
+  }
 
+  private bindEventHandlers(): void {
     this.grabButton.addEventListener('click', () => this.handleGrabOTP());
     this.smsButton.addEventListener('click', () => this.handleGrabSmsOTP());
     this.autoFillCheckbox.addEventListener('change', () => this.saveAutoFillPreference());
+    this.smsCheckbox.addEventListener('change', () => this.saveSmsPreference());
     this.settingsToggle.addEventListener('click', () => this.toggleOverridePanel());
     this.overrideInput.addEventListener('blur', () => this.handleOverrideChange());
     this.overrideInput.addEventListener('keydown', event => {
@@ -157,6 +159,17 @@ class PopupController {
         this.closeAccountDropdown();
       }
     });
+  }
+
+  private async loadInitialState(): Promise<void> {
+    await Promise.all([
+      this.loadAccounts(),
+      this.restoreRequestState(),
+      this.checkForUpdates(),
+      this.displayCurrentDomain(),
+      this.loadAutoFillPreference(),
+      this.loadSmsPreference()
+    ]);
   }
 
   private async loadAccounts(): Promise<void> {
@@ -305,6 +318,30 @@ class PopupController {
       await extensionApi.storage.local.set({ autoFillEnabled: this.autoFillCheckbox.checked });
     } catch (error) {
       console.error('Error saving auto-fill preference:', error);
+    }
+  }
+
+  // SMS grabbing is an opt-in feature (requires the external phone->Gmail relay),
+  // so the secondary button stays hidden until the user enables it here.
+  private async loadSmsPreference(): Promise<void> {
+    try {
+      const result = await extensionApi.storage.local.get(['smsEnabled']) as { smsEnabled?: boolean };
+      const enabled = result.smsEnabled ?? false;
+      this.smsCheckbox.checked = enabled;
+      this.smsButton.style.display = enabled ? '' : 'none';
+    } catch (error) {
+      console.error('Error loading SMS preference:', error);
+      this.smsCheckbox.checked = false;
+      this.smsButton.style.display = 'none';
+    }
+  }
+
+  private async saveSmsPreference(): Promise<void> {
+    try {
+      await extensionApi.storage.local.set({ smsEnabled: this.smsCheckbox.checked });
+      this.smsButton.style.display = this.smsCheckbox.checked ? '' : 'none';
+    } catch (error) {
+      console.error('Error saving SMS preference:', error);
     }
   }
 

@@ -396,7 +396,7 @@
     Get OTP from Gmail
   </button>
 
-  <button id="grabSMS" class="grab-button grab-button-secondary">
+  <button id="grabSMS" class="grab-button grab-button-secondary" style="display: none;">
     Grab SMS code
   </button>
   
@@ -421,7 +421,10 @@
       <input type="checkbox" id="autoFillEnabled" checked>
       <span class="checkbox-label">Auto-fill OTP code</span>
     </label>
-    
+    <label class="checkbox-container">
+      <input type="checkbox" id="smsEnabled">
+      <span class="checkbox-label">Enable SMS code grabbing</span>
+    </label>
   </div>
   
   <!-- Chrome uses native APIs, no browser-polyfill needed -->
