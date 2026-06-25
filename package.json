@@ -1,6 +1,6 @@
 {
   "name": "grab-otp-extension",
-  "version": "1.0.3",
+  "version": "1.0.8",
   "description": "Browser extension to automatically retrieve OTP codes from Gmail",
   "type": "module",
   "scripts": {
