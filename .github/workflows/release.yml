@@ -39,11 +39,11 @@ jobs:
         zip -r ../../grab-otp-chrome-${{ github.ref_name }}.zip .
         cd ../..
         
-    - name: Create Firefox extension package  
-      run: |
-        cd dist/firefox
-        zip -r ../../grab-otp-firefox-${{ github.ref_name }}.zip .
-        cd ../..
+    - name: Sign Firefox extension package  
+      env:
+        WEB_EXT_API_KEY: ${{ secrets.WEB_EXT_API_KEY }}
+        WEB_EXT_API_SECRET: ${{ secrets.WEB_EXT_API_SECRET }}
+      run: npm run sign:firefox
         
     - name: Generate changelog
       id: changelog
@@ -69,12 +69,17 @@ jobs:
           
           ## Downloads
           - **Chrome**: Download `grab-otp-chrome-${{ github.ref_name }}.zip`
-          - **Firefox**: Download `grab-otp-firefox-${{ github.ref_name }}.zip`
+          - **Firefox**: Download the `.xpi` file
           
           ## Installation
-          1. Download the appropriate ZIP file for your browser
+          **Chrome:**
+          1. Download the ZIP file
           2. Unzip the extension files
-          3. Load as unpacked extension in developer mode
+          3. Load as unpacked extension in developer mode (`chrome://extensions/`)
+          
+          **Firefox:**
+          1. Download the `.xpi` file
+          2. Open Firefox and drag the file into the browser, or go to `about:addons` -> ⚙️ -> Install Add-on From File...
           
           ## Changes
           ${{ steps.changelog.outputs.CHANGELOG }}
@@ -84,6 +89,6 @@ jobs:
           **Note**: Store versions pending review. Manual installation available above.
         files: |
           grab-otp-chrome-${{ github.ref_name }}.zip
-          grab-otp-firefox-${{ github.ref_name }}.zip
+          signed-packages/*.xpi
         draft: false
         prerelease: false

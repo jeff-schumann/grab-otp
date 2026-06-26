@@ -21,7 +21,22 @@ A cross-browser WebExtension that automatically retrieves OTP codes from Gmail b
 
 ## Installation
 
-### From Source (Recommended)
+### From Releases (Easiest)
+
+1. Go to the [Releases page](https://github.com/jefe-johann/grab-otp/releases) and download the latest release for your browser.
+
+**For Chrome / Brave / Edge:**
+1. Download the `grab-otp-chrome-vX.Y.Z.zip` file.
+2. Unzip the file to a folder.
+3. Open `chrome://extensions/` in your browser.
+4. Enable **Developer mode** (toggle in top-right).
+5. Click **Load unpacked** and select the unzipped folder.
+
+**For Firefox:**
+1. Download the `.xpi` file.
+2. Open Firefox and either drag and drop the `.xpi` file into the window, or go to `about:addons` ⚙️ -> **Install Add-on From File...** and select it.
+
+### From Source (For Developers)
 
 **Prerequisites:**
 - Node.js 18+ (Node.js 22 LTS recommended)
