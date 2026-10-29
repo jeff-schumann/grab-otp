@@ -6,7 +6,7 @@
 // browsers — only token acquisition differs, so each caller passes the token
 // it already holds.
 
-import { getGmailMessageTextContent, type GmailMessageWithPayload } from './gmail-message-text';
+import { getGmailMessageSubject, getGmailMessageTextContent, type GmailMessageWithPayload } from './gmail-message-text';
 import { extractOtpFromText } from './otp-extractor';
 import { buildSmsQuery, SMS_MAX_AGE_MS } from './gmail-query';
 
@@ -72,7 +72,7 @@ export async function fetchSmsOtpWithToken(
       break;
     }
 
-    const text = `${detail.snippet || ''}\n${getGmailMessageTextContent(detail)}`;
+    const text = `${getGmailMessageSubject(detail)}\n${detail.snippet || ''}\n${getGmailMessageTextContent(detail)}`;
     const otp = extractOtpFromText(text);
     if (otp) return { success: true, otp };
   }

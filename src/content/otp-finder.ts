@@ -193,6 +193,10 @@ function isFillable(input: HTMLInputElement): boolean {
     isVisible(input);
 }
 
+// Codes are not always digits — some sites issue letters ("ATVAOGXLPR") or a
+// mix. Anything 4-10 characters of letters and digits is fillable.
+const SUPPORTED_CODE = /^[A-Za-z0-9]{4,10}$/;
+
 function maxLengthAllows(input: HTMLInputElement, codeLength: number): boolean {
   return input.maxLength < 0 || input.maxLength === 0 || input.maxLength >= codeLength;
 }
@@ -216,20 +220,33 @@ function scoreInput(input: HTMLInputElement, otpCode: string): InputCandidate {
   if (hasAnyKeyword(context, POSITIVE_KEYWORDS)) score += 45;
   if (hasAnyKeyword(context, NEGATIVE_KEYWORDS)) score -= 70;
 
-  if (inputMode === 'numeric' || inputMode === 'decimal') score += 20;
-  if (type === 'tel' || type === 'number') score += 15;
-  if (/\\d|\[0-9\]|0-9/.test(pattern)) score += 15;
+  // Numeric hints favour a numeric code, but count against one containing
+  // letters — a digits-only field cannot hold the code we are about to fill.
+  const numericField = inputMode === 'numeric' || inputMode === 'decimal'
+    || type === 'tel' || type === 'number'
+    || /\\d|\[0-9\]|0-9/.test(pattern);
+  if (/^\d+$/.test(otpCode)) {
+    if (inputMode === 'numeric' || inputMode === 'decimal') score += 20;
+    if (type === 'tel' || type === 'number') score += 15;
+    if (/\\d|\[0-9\]|0-9/.test(pattern)) score += 15;
+  } else if (numericField) {
+    score -= 60;
+  }
 
+  // The upper bound follows the code so a 10-character code still matches a
+  // roomy field, without making 10-wide phone fields look good for a 6-digit
+  // code.
+  const widest = Math.max(8, otpCode.length);
   if (maxLength === otpCode.length) score += 30;
-  else if (maxLength >= 4 && maxLength <= 8) score += 20;
+  else if (maxLength >= 4 && maxLength <= widest) score += 20;
   else if (maxLength > 0 && maxLength < otpCode.length) score -= 80;
 
   if (minLength === otpCode.length) score += 10;
-  if (input.size >= 4 && input.size <= 8) score += 5;
+  if (input.size >= 4 && input.size <= widest) score += 5;
 
   if (input.matches(':focus')) score += 5;
   if (currentValue) {
-    if (/^\d{0,8}$/.test(currentValue)) score -= 10;
+    if (/^[A-Za-z0-9]{0,10}$/.test(currentValue)) score -= 10;
     else score -= 45;
   }
 
@@ -311,7 +328,7 @@ function scoreSegmentedGroup(group: HTMLInputElement[], otpCode: string): number
   if (hasAnyKeyword(`${containerText} ${groupText}`, POSITIVE_KEYWORDS)) score += 45;
   if (hasAnyKeyword(`${containerText} ${groupText}`, NEGATIVE_KEYWORDS)) score -= 90;
   if (group.every(input => ['numeric', 'decimal'].includes(attr(input, 'inputmode')))) score += 20;
-  if (group.every(input => !input.value || /^\d$/.test(input.value))) score += 10;
+  if (group.every(input => !input.value || /^[A-Za-z0-9]$/.test(input.value))) score += 10;
 
   return score;
 }
@@ -410,9 +427,9 @@ export function findOTPFillTarget(otpCode: string): OtpFillResult & { input?: HT
 }
 
 export function fillOTPCode(otpCode: string, log: Logger = () => undefined): OtpFillResult {
-  log(`Attempting OTP auto-fill for ${otpCode.length} digit code`);
+  log(`Attempting OTP auto-fill for ${otpCode.length} character code`);
 
-  if (!/^\d{4,8}$/.test(otpCode)) {
+  if (!SUPPORTED_CODE.test(otpCode)) {
     log('OTP auto-fill skipped: unsupported code format');
     return { success: false, strategy: 'none', reason: 'invalid-code' };
   }

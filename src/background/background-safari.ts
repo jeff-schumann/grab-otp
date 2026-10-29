@@ -5,7 +5,7 @@ import type { AccountInfo } from '../shared/account-manager';
 import { generateCodeChallenge, generateCodeVerifier, exchangeCodeForTokens } from '../shared/pkce';
 import { GMAIL_SCOPE, REQUIRED_SCOPE, getTokenScopes, getUserEmail, refreshToken } from '../shared/oauth';
 import { checkForUpdates } from '../shared/version-check';
-import { getGmailMessageTextContent } from './gmail-message-text';
+import { getGmailMessageSubject, getGmailMessageTextContent } from './gmail-message-text';
 import { extractOtpFromText } from './otp-extractor';
 import { buildSenderQuery } from './gmail-query';
 import { fetchSmsOtpWithToken } from './sms-otp';
@@ -538,7 +538,8 @@ class SafariGmailOTPFetcher {
 
   private extractOTP(message: GmailMessageResponse): string | null {
     const content = getGmailMessageTextContent(message);
-    const searchText = `${message.snippet || ''}\n${content}`;
+    const subject = getGmailMessageSubject(message);
+    const searchText = `${subject}\n${message.snippet || ''}\n${content}`;
     return extractOtpFromText(searchText);
   }
 }

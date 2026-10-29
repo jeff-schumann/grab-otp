@@ -126,4 +126,51 @@ describe('fillOTPCode', () => {
     expect(result.strategy).toBe('none');
     expect((document.getElementById('short') as HTMLInputElement).value).toBe('');
   });
+
+  it('fills a letter-only code', () => {
+    document.body.innerHTML = `
+      <label for="otp">2FA code</label>
+      <input id="otp" maxlength="10">
+    `;
+
+    const result = fillOTPCode('ATVAOGXLPR', noop);
+
+    expect(result).toMatchObject({ success: true, strategy: 'single' });
+    expect((document.getElementById('otp') as HTMLInputElement).value).toBe('ATVAOGXLPR');
+  });
+
+  it('fills a mixed letter-and-digit code', () => {
+    document.body.innerHTML = `
+      <label for="otp">Verification code</label>
+      <input id="otp" maxlength="6">
+    `;
+
+    const result = fillOTPCode('X7K2P9', noop);
+
+    expect(result).toMatchObject({ success: true, strategy: 'single' });
+    expect((document.getElementById('otp') as HTMLInputElement).value).toBe('X7K2P9');
+  });
+
+  it('avoids a digits-only field when the code contains letters', () => {
+    document.body.innerHTML = `
+      <label for="num">Verification code</label>
+      <input id="num" inputmode="numeric" maxlength="10">
+      <input id="text" aria-label="Verification code" maxlength="10">
+    `;
+
+    const result = fillOTPCode('ATVAOGXLPR', noop);
+
+    expect(result.success).toBe(true);
+    expect((document.getElementById('num') as HTMLInputElement).value).toBe('');
+    expect((document.getElementById('text') as HTMLInputElement).value).toBe('ATVAOGXLPR');
+  });
+
+  it('still refuses a code format it cannot fill', () => {
+    document.body.innerHTML = '<input id="otp" autocomplete="one-time-code" maxlength="10">';
+
+    const result = fillOTPCode('not a code!', noop);
+
+    expect(result).toMatchObject({ success: false, reason: 'invalid-code' });
+    expect((document.getElementById('otp') as HTMLInputElement).value).toBe('');
+  });
 });

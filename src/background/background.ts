@@ -2,7 +2,7 @@
 
 import { AccountManager, TOKEN_REFRESH_ALARM } from '../shared/account-manager';
 import type { OtpFillResult } from '../content/otp-finder';
-import { getGmailMessageTextContent } from './gmail-message-text';
+import { getGmailMessageSubject, getGmailMessageTextContent } from './gmail-message-text';
 import { extractOtpFromText } from './otp-extractor';
 import { buildSenderQuery } from './gmail-query';
 import { fetchSmsOtpWithToken } from './sms-otp';
@@ -243,7 +243,8 @@ class GmailOTPFetcher {
 
   private extractOTP(message: GmailMessageResponse): string | null {
     const content = getGmailMessageTextContent(message);
-    const searchText = `${message.snippet || ''}\n${content}`;
+    const subject = getGmailMessageSubject(message);
+    const searchText = `${subject}\n${message.snippet || ''}\n${content}`;
     return extractOtpFromText(searchText);
   }
 
