@@ -205,11 +205,9 @@ export class AccountManager {
 
     await this.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: accounts });
 
-    // If this is the first account, make it active
-    const activeEmail = await this.getActiveAccountEmail();
-    if (!activeEmail) {
-      await this.setActiveAccount(email);
-    }
+    // A just-added (or just re-authenticated) account becomes the active one —
+    // adding an account is always an explicit request to use it.
+    await this.setActiveAccount(email);
 
     console.log('[AccountManager] Account added/updated:', email,
       '| refreshToken:', accounts[email].refreshToken ? 'present' : 'MISSING (token refresh will not work)');

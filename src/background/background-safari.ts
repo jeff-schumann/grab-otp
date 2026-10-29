@@ -284,10 +284,8 @@ class SafariAccountStore {
 
       await browser.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: accounts });
 
-      const activeEmail = await this.getActiveAccountEmail();
-      if (!activeEmail) {
-        await this.setActiveAccount(email);
-      }
+      // A just-added (or just re-authenticated) account becomes the active one.
+      await this.setActiveAccount(email);
 
       return { success: true, email };
     } catch (error) {

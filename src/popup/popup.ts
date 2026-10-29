@@ -67,6 +67,7 @@ const extensionGlobal = globalThis as typeof globalThis & {
 const extensionApi = (extensionGlobal.chrome ?? extensionGlobal.browser) as ExtensionApi;
 const LATEST_RESULT_KEY = 'latest_otp_result';
 const IN_FLIGHT_KEY = 'otp_request_in_flight';
+const ACCOUNT_PICKER_OPEN_KEY = 'account_picker_open';
 const RESULT_TTL_MS = 60 * 1000;
 const AUTO_FILLED_RESULT_TTL_MS = 5 * 1000;
 
@@ -164,6 +165,7 @@ class PopupController {
   private async loadInitialState(): Promise<void> {
     await Promise.all([
       this.loadAccounts(),
+      this.restoreAccountPickerState(),
       this.restoreRequestState(),
       this.checkForUpdates(),
       this.displayCurrentDomain(),
@@ -226,32 +228,63 @@ class PopupController {
   }
 
   private toggleAccountDropdown(): void {
-    this.isDropdownOpen = !this.isDropdownOpen;
-    this.accountDropdown.style.display = this.isDropdownOpen ? 'block' : 'none';
-    this.accountDropdownToggle.classList.toggle('open', this.isDropdownOpen);
+    this.setAccountDropdownOpen(!this.isDropdownOpen);
   }
 
   private closeAccountDropdown(): void {
-    this.isDropdownOpen = false;
-    this.accountDropdown.style.display = 'none';
-    this.accountDropdownToggle.classList.remove('open');
+    this.setAccountDropdownOpen(false);
+  }
+
+  private setAccountDropdownOpen(open: boolean): void {
+    this.isDropdownOpen = open;
+    this.accountDropdown.style.display = open ? 'block' : 'none';
+    this.accountDropdownToggle.classList.toggle('open', open);
+  }
+
+  // The Google sign-in window takes focus, which tears the popup down in most
+  // browsers. Remembering that the picker was open lets the reopened popup come
+  // back to the same place instead of collapsed.
+  private async restoreAccountPickerState(): Promise<void> {
+    try {
+      const result = await extensionApi.storage.local.get([ACCOUNT_PICKER_OPEN_KEY]) as Record<string, boolean | undefined>;
+      if (!result[ACCOUNT_PICKER_OPEN_KEY]) return;
+      await extensionApi.storage.local.remove(ACCOUNT_PICKER_OPEN_KEY);
+      this.setAccountDropdownOpen(true);
+    } catch (error) {
+      console.error('Error restoring account picker state:', error);
+    }
   }
 
   private async handleAddAccount(): Promise<void> {
-    this.closeAccountDropdown();
+    this.setAccountDropdownOpen(true);
     this.showStatus('Opening Google sign-in...', 'loading');
+
+    try {
+      await extensionApi.storage.local.set({ [ACCOUNT_PICKER_OPEN_KEY]: true });
+    } catch (error) {
+      console.error('Error saving account picker state:', error);
+    }
 
     try {
       const response = await extensionApi.runtime.sendMessage({ action: 'addAccount' }) as { success: boolean; email?: string; error?: string };
       if (response.success) {
-        this.showStatus(`Added account: ${response.email}`, 'success');
+        this.showStatus(`Switched to ${response.email}`, 'success');
         await this.loadAccounts();
       } else {
         this.showStatus(response.error || 'Failed to add account', 'error');
       }
+      this.setAccountDropdownOpen(true);
     } catch (error) {
       console.error('Error adding account:', error);
       this.showStatus('Error adding account', 'error');
+    } finally {
+      // Only reached if the popup survived the sign-in window; otherwise the
+      // flag stays set for the next popup to consume.
+      try {
+        await extensionApi.storage.local.remove(ACCOUNT_PICKER_OPEN_KEY);
+      } catch (error) {
+        console.error('Error clearing account picker state:', error);
+      }
     }
   }
 

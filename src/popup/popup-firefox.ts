@@ -3,6 +3,7 @@ declare const browser: any;
 
 const RESULT_TTL_MS = 60 * 1000;
 const AUTO_FILLED_RESULT_TTL_MS = 5 * 1000;
+const ACCOUNT_PICKER_OPEN_KEY = 'account_picker_open';
 
 interface OTPRequest {
   action: string;
@@ -99,6 +100,7 @@ class FirefoxPopupController {
   private async init() {
     // Load accounts first
     await this.loadAccounts();
+    await this.restoreAccountPickerState();
 
     // Check for updates
     await this.checkForUpdates();
@@ -205,32 +207,63 @@ class FirefoxPopupController {
   }
 
   private toggleAccountDropdown() {
-    this.isDropdownOpen = !this.isDropdownOpen;
-    this.accountDropdown.style.display = this.isDropdownOpen ? 'block' : 'none';
-    this.accountDropdownToggle.classList.toggle('open', this.isDropdownOpen);
+    this.setAccountDropdownOpen(!this.isDropdownOpen);
   }
 
   private closeAccountDropdown() {
-    this.isDropdownOpen = false;
-    this.accountDropdown.style.display = 'none';
-    this.accountDropdownToggle.classList.remove('open');
+    this.setAccountDropdownOpen(false);
+  }
+
+  private setAccountDropdownOpen(open: boolean) {
+    this.isDropdownOpen = open;
+    this.accountDropdown.style.display = open ? 'block' : 'none';
+    this.accountDropdownToggle.classList.toggle('open', open);
+  }
+
+  // The Google sign-in window takes focus, which tears the popup down.
+  // Remembering that the picker was open lets the reopened popup come back to
+  // the same place instead of collapsed.
+  private async restoreAccountPickerState() {
+    try {
+      const result = await browser.storage.local.get([ACCOUNT_PICKER_OPEN_KEY]);
+      if (!result[ACCOUNT_PICKER_OPEN_KEY]) return;
+      await browser.storage.local.remove(ACCOUNT_PICKER_OPEN_KEY);
+      this.setAccountDropdownOpen(true);
+    } catch (error) {
+      console.error('Error restoring account picker state:', error);
+    }
   }
 
   private async handleAddAccount() {
-    this.closeAccountDropdown();
+    this.setAccountDropdownOpen(true);
     this.showStatus('Adding Gmail account...', 'loading');
+
+    try {
+      await browser.storage.local.set({ [ACCOUNT_PICKER_OPEN_KEY]: true });
+    } catch (error) {
+      console.error('Error saving account picker state:', error);
+    }
 
     try {
       const response = await browser.runtime.sendMessage({ action: 'addAccount' });
       if (response.success) {
-        this.showStatus(`Added account: ${response.email}`, 'success');
+        this.showStatus(`Switched to ${response.email}`, 'success');
         await this.loadAccounts();
       } else {
         this.showStatus('Failed to add account', 'error');
       }
+      this.setAccountDropdownOpen(true);
     } catch (error) {
       console.error('Error adding account:', error);
       this.showStatus('Error adding account', 'error');
+    } finally {
+      // Only reached if the popup survived the sign-in window; otherwise the
+      // flag stays set for the next popup to consume.
+      try {
+        await browser.storage.local.remove(ACCOUNT_PICKER_OPEN_KEY);
+      } catch (error) {
+        console.error('Error clearing account picker state:', error);
+      }
     }
   }
 
