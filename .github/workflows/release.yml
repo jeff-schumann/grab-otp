@@ -28,11 +28,17 @@ jobs:
       run: npm run typecheck
       
     - name: Build Chrome extension
+      env:
+        CHROME_CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+        CHROME_CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
       run: npm run build:chrome
-      
+
     - name: Build Firefox extension
+      env:
+        FIREFOX_CLIENT_ID: ${{ secrets.FIREFOX_CLIENT_ID }}
+        FIREFOX_CLIENT_SECRET: ${{ secrets.FIREFOX_CLIENT_SECRET }}
       run: npm run build:firefox
-      
+
     - name: Create Chrome extension package
       run: |
         cd dist/chrome
