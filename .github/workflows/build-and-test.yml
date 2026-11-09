@@ -39,7 +39,8 @@ jobs:
     # These builds only prove the extension still compiles, so they skip the
     # OAuth credential check rather than exposing the secrets to fork pull
     # requests. Artifacts from here cannot sign in and must never be released;
-    # release.yml builds with the real credentials.
+    # releases are built, signed and published locally by
+    # jeff_stuff/firefox_rebuild/rebuild.sh, which has the real credentials.
     - name: Build Chrome extension
       env:
         ALLOW_MISSING_OAUTH_CREDENTIALS: '1'

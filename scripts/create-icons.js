@@ -7,7 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const iconSizes = [16, 32, 48, 128];
-const iconDir = path.join(__dirname, 'src', 'icons');
+const iconDir = path.join(__dirname, '..', 'src', 'icons');
 
 // Create a simple SVG icon template
 const createSVGIcon = (size) => `

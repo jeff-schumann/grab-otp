@@ -42,6 +42,8 @@ temp-extract/
 
 # Development artifacts
 grab-otp-firefox.zip
+# Release packages built locally before uploading to a GitHub release
+grab-otp-chrome-*.zip
 .grepai/
 signed-packages/
 web-ext-artifacts/

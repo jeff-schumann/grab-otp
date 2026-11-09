@@ -23,7 +23,7 @@ A cross-browser WebExtension that automatically retrieves OTP codes from Gmail b
 
 ### From Releases (Easiest)
 
-1. Go to the [Releases page](https://github.com/jefe-johann/grab-otp/releases) and download the latest release for your browser.
+1. Go to the [Releases page](https://github.com/jeff-schumann/grab-otp/releases) and download the latest release for your browser.
 
 **For Chrome / Brave / Edge:**
 1. Download the `grab-otp-chrome-vX.Y.Z.zip` file.
@@ -35,6 +35,8 @@ A cross-browser WebExtension that automatically retrieves OTP codes from Gmail b
 **For Firefox:**
 1. Download the `.xpi` file.
 2. Open Firefox and either drag and drop the `.xpi` file into the window, or go to `about:addons` ⚙️ -> **Install Add-on From File...** and select it.
+3. That's a one-time step. From 1.0.13 onward the add-on updates itself: Firefox
+   checks for new signed releases daily and offers them under **Available Updates**.
 
 ### From Source (For Developers)
 
@@ -45,7 +47,7 @@ A cross-browser WebExtension that automatically retrieves OTP codes from Gmail b
 **Build Steps:**
 ```bash
 # Clone the repository
-git clone https://github.com/jefe-johann/grab-otp.git
+git clone https://github.com/jeff-schumann/grab-otp.git
 cd grab-otp
 
 # Install dependencies
@@ -68,7 +70,11 @@ npm run package:safari # For Safari
 2. Click "Load Temporary Add-on"
 3. Navigate to `dist/firefox` and select `manifest.json`
 
-**Note:** Firefox temporary extensions are removed when the browser closes. For persistent installation, use `web-ext` to create a signed `.xpi` file.
+**Note:** Firefox temporary add-ons are removed when the browser closes, and each
+load assigns a new random extension ID — which changes the OAuth redirect URI, so
+Google sign-in fails until you add the new URI to your own OAuth client. For a
+persistent install, sign the build with `web-ext sign --channel=unlisted`, which
+keeps the extension ID (and therefore the redirect URI) stable.
 
 **Loading in Safari:**
 1. Set `SAFARI_CLIENT_ID` in `.env` using a Google native/macOS OAuth client.
@@ -90,9 +96,10 @@ See [Privacy Policy](PRIVACY_POLICY.md) for full details.
 
 > **On the bundled OAuth client secret:** the secret shipped in the built
 > extension is *intentionally* non-confidential — the flow is secured by PKCE and
-> a locked redirect URI, not by hiding the secret. See
-> [docs/OAUTH_SETUP.md](docs/OAUTH_SETUP.md#-security-the-client-secret-is-not-confidential)
-> before reporting it as a vulnerability.
+> a locked redirect URI, not by hiding the secret. Google documents that client
+> secrets for installed apps aren't treated as confidential, since anyone can
+> extract them from the binary; what protects the flow is that an attacker can't
+> receive the redirect. Please don't report it as a vulnerability.
 
 ## Browser Support
 
@@ -157,7 +164,10 @@ If you fork this project and redistribute it, you **MUST** use your own OAuth cr
 - `dist/firefox/` - Built Firefox extension
 - `dist/safari/` - Built Safari extension resources
 - `safari/` - Safari wrapper app and Xcode project
-- `docs/` - Documentation and development notes
+- `scripts/` - Build and release helper scripts
+- `guides/` - Setup guides, e.g. forwarding SMS codes to Gmail
+- `site/` - Standalone landing page (not published anywhere)
+- `updates.json` - Update feed Firefox polls for new signed versions
 
 ## Contributing
 
@@ -173,5 +183,5 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Support
 
-- 🐛 [Report Issues](https://github.com/jefe-johann/grab-otp/issues)
-- 💡 [Feature Requests](https://github.com/jefe-johann/grab-otp/issues/new)
+- 🐛 [Report Issues](https://github.com/jeff-schumann/grab-otp/issues)
+- 💡 [Feature Requests](https://github.com/jeff-schumann/grab-otp/issues/new)
