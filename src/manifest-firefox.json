@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Grab OTP",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "description": "Automatically retrieve OTP codes from Gmail based on the active website's domain",
   
   "permissions": [
@@ -51,7 +51,8 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "{030a8139-6c4b-4aed-b2a8-6a917030bfdf}",
-      "strict_min_version": "91.0"
+      "strict_min_version": "91.0",
+      "update_url": "https://raw.githubusercontent.com/jeff-schumann/grab-otp/master/updates.json"
     }
   }
 }

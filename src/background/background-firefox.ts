@@ -1,5 +1,4 @@
 // Firefox background script - uses global browser from polyfill
-import { checkForUpdates } from '../shared/version-check';
 import { AccountManager, TOKEN_REFRESH_ALARM } from '../shared/account-manager';
 import { type OtpFillResult } from '../content/otp-finder';
 import { getGmailMessageSubject, getGmailMessageTextContent } from './gmail-message-text';
@@ -474,9 +473,8 @@ async function initialize() {
   // Schedule proactive token refresh
   await scheduleTokenRefresh();
 
-  // Check for updates
-  const manifest = browser.runtime.getManifest();
-  await checkForUpdates(manifest.version, browser.storage);
+  // No update polling here: the Firefox build ships an `update_url`, so Firefox
+  // itself checks updates.json daily and surfaces new versions natively.
 }
 
 // Check for updates on startup

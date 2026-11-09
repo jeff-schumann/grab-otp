@@ -53,7 +53,7 @@ export async function checkForUpdates(
 
     // Fetch latest release from GitHub
     const response = await fetch(
-      'https://api.github.com/repos/jefe-johann/grab-otp/releases/latest',
+      'https://api.github.com/repos/jeff-schumann/grab-otp/releases/latest',
       {
         headers: {
           'Accept': 'application/vnd.github.v3+json'

@@ -53,8 +53,6 @@ class FirefoxPopupController {
   private domainElement: HTMLElement;
   private autoFillCheckbox: HTMLInputElement;
   private smsCheckbox: HTMLInputElement;
-  private updateBanner: HTMLElement;
-  private updateMessage: HTMLElement;
   private resultPollingInterval: number | null = null;
   private hasClosed: boolean = false;
   private settingsToggle: HTMLButtonElement;
@@ -79,8 +77,6 @@ class FirefoxPopupController {
     this.domainElement = document.getElementById('currentDomain')!;
     this.autoFillCheckbox = document.getElementById('autoFillEnabled') as HTMLInputElement;
     this.smsCheckbox = document.getElementById('smsEnabled') as HTMLInputElement;
-    this.updateBanner = document.getElementById('updateBanner')!;
-    this.updateMessage = document.getElementById('updateMessage')!;
     this.settingsToggle = document.getElementById('settingsToggle') as HTMLButtonElement;
     this.overridePanel = document.getElementById('domainOverridePanel')!;
     this.overrideInput = document.getElementById('overrideDomain') as HTMLInputElement;
@@ -102,8 +98,6 @@ class FirefoxPopupController {
     await this.loadAccounts();
     await this.restoreAccountPickerState();
 
-    // Check for updates
-    await this.checkForUpdates();
     await this.displayCurrentDomain();
     await this.loadAutoFillPreference();
     await this.loadSmsPreference();
@@ -711,20 +705,6 @@ class FirefoxPopupController {
     this.overrideStatus.textContent = '';
   }
 
-  private async checkForUpdates() {
-    try {
-      const result = await browser.storage.local.get(['version_check']);
-      const versionInfo = result.version_check;
-
-      if (versionInfo && versionInfo.updateAvailable) {
-        this.updateMessage.textContent = `Version ${versionInfo.latest} is available (you have ${versionInfo.current}).`;
-        this.updateBanner.style.display = 'block';
-      }
-    } catch (error) {
-      // Silent fail - don't disrupt user experience for version checks
-      console.log('Failed to check for updates:', error);
-    }
-  }
 }
 
 document.addEventListener('DOMContentLoaded', () => {

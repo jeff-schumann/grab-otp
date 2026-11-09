@@ -45,12 +45,6 @@ jobs:
         zip -r ../../grab-otp-chrome-${{ github.ref_name }}.zip .
         cd ../..
         
-    - name: Sign Firefox extension package  
-      env:
-        WEB_EXT_API_KEY: ${{ secrets.WEB_EXT_API_KEY }}
-        WEB_EXT_API_SECRET: ${{ secrets.WEB_EXT_API_SECRET }}
-      run: npm run sign:firefox
-        
     - name: Generate changelog
       id: changelog
       run: |
@@ -84,8 +78,11 @@ jobs:
           3. Load as unpacked extension in developer mode (`chrome://extensions/`)
           
           **Firefox:**
-          1. Download the `.xpi` file
+          1. Download the `grab_otp-*.xpi` file
           2. Open Firefox and drag the file into the browser, or go to `about:addons` -> ⚙️ -> Install Add-on From File...
+
+          Already running Grab OTP on Firefox? You don't need to do anything — Firefox
+          checks for new versions daily and will offer this one under Available Updates.
           
           ## Changes
           ${{ steps.changelog.outputs.CHANGELOG }}
@@ -95,6 +92,5 @@ jobs:
           **Note**: Store versions pending review. Manual installation available above.
         files: |
           grab-otp-chrome-${{ github.ref_name }}.zip
-          signed-packages/*.xpi
         draft: false
         prerelease: false
